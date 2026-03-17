@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 from settings.config import cfg
 from src.rag.core.interfaces import RagGenerator
+from src.rag.plugins.openrouter_generator import OpenRouterGenerator
 
 
 class MockLlm(RagGenerator):
@@ -31,15 +32,15 @@ class LlmRouter(RagGenerator):
 
 
 def build_llm() -> RagGenerator:
-    provider = cfg.LLM_PROVIDER.lower()
-    if provider == "openrouter":
-        from .openrouter import OpenRouterLlm
-        primary = OpenRouterLlm(
-            api_key=cfg.OPENROUTER_API_KEY,
-            default_model=cfg.MODEL_NAME,
-        )
-        return LlmRouter(primary=primary, fallback=MockLlm())
-    if provider == "local":
-        # Placeholder: integrate your local serving client here.
-        return MockLlm()
-    return MockLlm()
+    # provider = cfg.LLM_PROVIDER.lower()
+    # if provider == "openrouter":
+    #     from .openrouter import OpenRouterLlm
+    #     primary = OpenRouterLlm(
+    #         api_key=cfg.OPENROUTER_API_KEY,
+    #         default_model=cfg.MODEL_NAME,
+    #     )
+    #     return LlmRouter(primary=primary, fallback=MockLlm())
+    # if provider == "local":
+    #     return MockLlm()
+    # return MockLlm()
+    return OpenRouterGenerator()
