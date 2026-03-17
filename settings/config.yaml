@@ -1,0 +1,13 @@
+llm: {
+  provider: "openrouter"
+}
+
+openrouter: {
+  base_url: "https://openrouter.ai",
+  model_name: "openai/gpt-4o-mini",
+}
+
+agent: {
+  max_timeout: 5.0,  # sec
+  max_retries: 3,
+}
