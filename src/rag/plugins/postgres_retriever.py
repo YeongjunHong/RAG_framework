@@ -1,12 +1,14 @@
+import asyncio
 from typing import List, Sequence, Dict, Any
 import asyncpg
 import json
-#추가 
 from langchain_huggingface import HuggingFaceEmbeddings
-
+import re # 추가
+import sys
 from src.rag.core.types import SourceChunk, ScoredChunk
 from src.rag.core.interfaces import RagRetriever
 from src.common.logger import get_logger
+from typing import List, Sequence, Dict, Any
 
 logger = get_logger(__name__)
 
@@ -41,12 +43,21 @@ class PostgresHybridRetriever(RagRetriever):
         #추가
         query_vector = self.embeddings.embed_query(q_text)
         q_vector_str = f"[{','.join(map(str, query_vector))}]"
+
+        clean_text = re.sub(r'[^\w\s]', '', q_text) # 특수문자 제거
+        tokens = [t for t in clean_text.split() if t]
+        tsquery_str = " | ".join(tokens) if tokens else ""
+        
+        # 만약 유효한 키워드가 없다면 검색 중단
+        if not tsquery_str:
+            return []
         
         async with asyncpg.create_pool(dsn=self.dsn, min_size=1, max_size=5) as pool:
             async with pool.acquire() as conn:
                 
                 # 기본 파라미터 세팅
-                args = [q_text, q_vector_str, top_k, bm25_weight, vector_weight]
+                # args = [q_text, q_vector_str, top_k, bm25_weight, vector_weight]
+                args = [tsquery_str, q_vector_str, top_k, bm25_weight, vector_weight]
                 extra_where = ""
                 
                 # 동적 필터링 (source_knowledge의 subject 등 필터링)
@@ -62,11 +73,11 @@ class PostgresHybridRetriever(RagRetriever):
                     -- 1. 키워드 기반 검색 (BM25)
                     SELECT 
                         sc.id AS chunk_id,
-                        ts_rank_cd(sc.chunk_tsv, websearch_to_tsquery('simple', $1)) AS bm25_score
+                        ts_rank_cd(sc.chunk_tsv, to_tsquery('simple', $1)) AS bm25_score
                     FROM source_chunk sc
                     JOIN map_source_chunk msc ON sc.id = msc.chunk_id
                     JOIN source_knowledge sk ON msc.source_id = sk.id
-                    WHERE sc.chunk_tsv @@ websearch_to_tsquery('simple', $1)
+                    WHERE sc.chunk_tsv @@ to_tsquery('simple', $1)
                     {extra_where}
                     ORDER BY bm25_score DESC
                     LIMIT 100 -- 풀스캔 방지를 위해 적당히 끊음
@@ -131,5 +142,5 @@ if __name__ == "__main__":
     if sys.platform == 'win32':
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     
-    # 이 줄이 없으면 main 함수가 실행되지 않고 그냥 끝납니다!
+    
     asyncio.run(main())
