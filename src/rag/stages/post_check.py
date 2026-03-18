@@ -1,3 +1,4 @@
+import re
 from pydantic import BaseModel
 
 from src.rag.core.types import RagRequest, RagResponse, RagContext, Citation
@@ -19,10 +20,28 @@ class PostCheckStage(RagStage[PostCheckConfig]):
 
 
 def to_response(request: RagRequest, ctx: RagContext) -> RagResponse:
-    # Minimal citation: include top filtered chunks ids
-    citations = []
-    for sc in (ctx.filtered[:5] if ctx.filtered else []):
-        citations.append(Citation(source_id=sc.chunk.source_id, chunk_id=sc.chunk.chunk_id))
-
     answer = ctx.raw_generation or ""
-    return RagResponse(trace_id=request.trace_id, answer=answer, citations=citations, diagnostics={"plan_id": ctx.plan_id, "timings_ms": ctx.timings_ms})
+    
+    # 1. 정규식(Regex)을 사용하여 LLM 답변에서 [REF-숫자] 패턴의 숫자만 모두 추출
+    # 예: "어쩌구 저쩌구 [REF-94110]" -> 94110 추출
+    extracted_ids = re.findall(r'\[REF-(\d+)\]', answer)
+    used_chunk_ids = list(set(int(id_str) for id_str in extracted_ids))
+    
+    # 2. LLM이 실제로 참조했다고 밝힌 ID만 찾아내서 Citations 배열 조립
+    citations = []
+    # PromptMaker에서 ctx.reranked를 컨텍스트로 주었으므로 여기서도 동일하게 대조합니다.
+    for doc in ctx.reranked:
+        if doc.chunk.chunk_id in used_chunk_ids:
+            citations.append(
+                Citation(
+                    source_id=doc.chunk.source_id, 
+                    chunk_id=doc.chunk.chunk_id
+                )
+            )
+
+    return RagResponse(
+        trace_id=request.trace_id, 
+        answer=answer, 
+        citations=citations, 
+        diagnostics={"plan_id": ctx.plan_id, "timings_ms": ctx.timings_ms}
+    )
