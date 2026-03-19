@@ -17,18 +17,18 @@ class LocalCrossEncoderReranker(RagReranker):
         if not candidates:
             return []
 
-        # 1. 모델에 넣을 (질문, 문서내용) 쌍의 리스트를 만듭니다.
+        # 1. 모델에 넣을 (질문, 문서내용) 쌍의 리스트
         sentence_pairs = [[query, doc.chunk.content] for doc in candidates]
 
-        # 2. Cross-Encoder로 문맥 유사도를 정밀 채점합니다.
+        # 2. Cross-Encoder로 문맥 유사도를 정밀 채점
         scores = self.model.predict(sentence_pairs)
 
-        # 3. 기존 객체에 새로운 점수를 부여하고 정렬합니다.
+        # 3. 기존 객체에 새로운 점수를 부여하고 정렬
         for i, doc in enumerate(candidates):
-            # 원래 DB에서 가져온 점수(retrieval_score)는 백업해둡니다.
+            # 원래 DB에서 가져온 점수(retrieval_score)는 백업
             doc.signals['retrieval_score'] = doc.score 
             doc.score = float(scores[i])
 
-        # 4. 점수가 높은 순으로 정렬하여 top_k 개만 잘라서 반환합니다.
+        # 4. 점수가 높은 순으로 정렬하여 top_k 개만 잘라서 반환
         reranked_candidates = sorted(candidates, key=lambda x: x.score, reverse=True)
         return reranked_candidates[:top_k]
