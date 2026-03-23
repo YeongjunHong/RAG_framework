@@ -71,6 +71,7 @@ class FilteringStage(RagStage[FilteringConfig]):
             # 최종 상태를 FilteredChunk로 래핑하여 저장
             filtered_chunk = FilteredChunk(
                 chunk=doc.chunk,
+                score=doc.score,
                 kept=kept,
                 reasons=reasons
             )

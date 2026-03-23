@@ -29,7 +29,7 @@ def to_response(request: RagRequest, ctx: RagContext) -> RagResponse:
     
     # 2. LLM이 실제로 참조했다고 밝힌 ID만 찾아내서 Citations 배열 조립
     citations = []
-    # PromptMaker에서 ctx.reranked를 컨텍스트로 주었으므로 여기서도 동일하게 대조합니다.
+    # PromptMaker에서 ctx.reranked를 컨텍스트로 주었으므로 여기서도 동일하게 대조.
     for doc in ctx.reranked:
         if doc.chunk.chunk_id in used_chunk_ids:
             citations.append(
