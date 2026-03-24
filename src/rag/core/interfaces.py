@@ -1,12 +1,20 @@
 from abc import ABC, abstractmethod
 import asyncio  # 추가
-from typing import List, Sequence, Generic, TypeVar, Any
+from typing import List, Sequence, Generic, TypeVar, Any, Dict
 import time
 
 from .types import ScoredChunk, ExpandedQuery, FilteredChunk, EvidenceGroup, RagRequest, RagContext, TConfig
 
 
 TInterface = TypeVar("TInterface", bound=ABC)
+
+class RagPlanner(ABC):
+    """Planner port for intent classification and routing strategy."""
+    
+    @abstractmethod
+    async def forward(self, query: str) -> Dict[str, Any]:
+        """사용자의 질문을 분석하여 파이프라인의 실행 계획(Dict)을 반환한다."""
+        raise NotImplementedError
 
 
 class RagQueryExpander(ABC):
