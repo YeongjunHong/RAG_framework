@@ -7,7 +7,7 @@ import src.rag.services.registry as registry
 def build_query_expander_registry(**kwargs) -> registry.QueryExpanderRegistry:
     return registry.QueryExpanderRegistry()
 
-#테스트용; jules 추가 
+#테스트용; 
 
 from settings.config import cfg
 import src.common.utils as utils

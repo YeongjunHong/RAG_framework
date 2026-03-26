@@ -21,12 +21,16 @@ class GraphState(TypedDict):
     request: RagRequest
     ctx: RagContext
 
-
 def build_graph():
     from langgraph.graph import StateGraph, END
 
     tracer = build_tracer()
     llm = build_llm()
+
+    # 수정 
+    # from src.rag.plugins.openrouter_generator import OpenRouterGenerator
+    # llm = OpenRouterGenerator()
+
 
     # registry
     query_expander_registry = wiring.build_query_expander_registry()
