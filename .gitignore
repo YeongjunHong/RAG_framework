@@ -18,9 +18,11 @@ dist/
 *.spec
 *.csv
 *.xlsx
+*.jsonl
 *Zone.Identifier
 logs/
 reports/
+
 
 #세팅 폴더 제거 
 /settings/
