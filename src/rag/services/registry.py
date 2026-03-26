@@ -5,6 +5,7 @@ from src.rag.core.interfaces import (
     TInterface,
     RagQueryExpander,
     RagRetriever,
+    RagPlanner, # 새로 추가
     RagReranker,
     RagFilterer,
     RagAssembler,
@@ -84,6 +85,8 @@ class PromptMakerRegistry(BaseRegistry[RagPromptMaker]):
 class GeneratorRegistry(BaseRegistry[RagGenerator]):
     pass
 
+class PlannerRegistry(BaseRegistry[RagPlanner]):  # 플래너 클래스 추가.
+    pass
 
 class PostCheckerRegistry(BaseRegistry[RagPostChecker]):
     pass
