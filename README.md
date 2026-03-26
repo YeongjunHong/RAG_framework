@@ -85,6 +85,7 @@ RAG_FRAMEWORK/
 │       │   ├── openrouter_generator.py
 │       │   ├── openrouter.py
 │       │   ├── postgres_retriever.py
+            ├── local_reranker.py
 │       │   ├── router.py
 │       │   └── tracing.py
 │       ├── services/
