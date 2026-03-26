@@ -9,7 +9,7 @@ from src.common.logger import get_logger
 logger = get_logger(__name__)
 
 class OpenRouterGenerator(RagGenerator):
-    def __init__(self, default_model: str = "google/gemma-3-4b-it:free"):
+    def __init__(self, default_model: str = "google/gemma-3-27b-it:free"):
         self.default_model = default_model
         self.api_key = os.getenv("OPENROUTER_API_KEY")
         
