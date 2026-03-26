@@ -42,7 +42,9 @@ class OTelTracer(Tracer):
                     raise RuntimeError("TRACE_EXPORTER=otlp but OTEL_EXPORTER_OTLP_ENDPOINT is not set")
                 span_exporter = OTLPSpanExporter(endpoint=endpoint)
             else:
-                span_exporter = ConsoleSpanExporter()
+                #span_exporter = ConsoleSpanExporter()
+                trace_file = open("demo_traces.jsonl", "a", encoding="utf-8")
+                span_exporter = ConsoleSpanExporter(out=trace_file)
 
             provider.add_span_processor(BatchSpanProcessor(span_exporter))
             trace.set_tracer_provider(provider)
