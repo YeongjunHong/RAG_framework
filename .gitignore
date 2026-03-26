@@ -1,0 +1,23 @@
+# Ignore directories for virtual environments.
+.venv/
+venv/
+
+# Ignore IDE or editor configuration files.
+build/
+dist/
+.vscode/
+.idea/
+
+# Ignore files related to package dependencies.
+**/__pycache__/
+*.pyc
+*.pyo
+
+# Ignore files.
+*.log
+*.spec
+*.csv
+*.xlsx
+*Zone.Identifier
+logs/
+reports/
