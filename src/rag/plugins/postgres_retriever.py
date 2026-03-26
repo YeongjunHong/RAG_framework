@@ -157,10 +157,11 @@ from src.rag.core.interfaces import RagRetriever
 from src.common.logger import get_logger
 
 logger = get_logger(__name__)
-
+import os
 class PostgresHybridRetriever(RagRetriever):
     def __init__(self, dsn: str):
         self.dsn = dsn
+
         logger.info("Retriever 내부 임베딩 모델 로드 중...")
         self.embeddings = HuggingFaceEmbeddings(
             model_name="jhgan/ko-sroberta-multitask",
