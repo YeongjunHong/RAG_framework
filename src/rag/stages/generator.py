@@ -18,6 +18,11 @@ class GeneratorStage(RagStage[GeneratorConfig]):
 
     async def run(self, request: RagRequest, ctx: RagContext) -> RagContext:
         with self.tracer.span("generate", model=self.config.model or "default"):
-            ctx.raw_generation = await self.llm.forward(prompt=ctx.prompt, model=self.config.model)
+            # 큐를 LLM으로 전달하여 스트리밍 파이프 연결
+            ctx.raw_generation = await self.llm.forward(
+                prompt=ctx.prompt, 
+                model=self.config.model,
+                stream_queue=ctx.stream_queue
+                )
         return ctx
 

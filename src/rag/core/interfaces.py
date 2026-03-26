@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+import asyncio  # 추가
 from typing import List, Sequence, Generic, TypeVar, Any
 import time
 
@@ -57,11 +58,24 @@ class RagPromptMaker(ABC):
         raise NotImplementedError
 
     
+# class RagGenerator(ABC):
+#     """Generator/Router port (OpenRouter / other routers / local)."""
+
+#     @abstractmethod
+#     async def forward(self, *, prompt: str, model: str|None=None) -> str:
+#         raise NotImplementedError
+
 class RagGenerator(ABC):
     """Generator/Router port (OpenRouter / other routers / local)."""
 
     @abstractmethod
-    async def forward(self, *, prompt: str, model: str|None=None) -> str:
+    async def forward(
+        self, 
+        *, 
+        prompt: str, 
+        model: str | None = None, 
+        stream_queue: asyncio.Queue | None = None  # 추가된 부분
+    ) -> str:
         raise NotImplementedError
     
 

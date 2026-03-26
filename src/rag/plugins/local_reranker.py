@@ -1,3 +1,4 @@
+import asyncio
 from typing import List
 from sentence_transformers import CrossEncoder
 from src.rag.core.types import ScoredChunk
@@ -10,7 +11,7 @@ class LocalCrossEncoderReranker(RagReranker):
     def __init__(self, model_name: str = "BAAI/bge-reranker-v2-m3"):
         logger.info(f"Reranker 모델({model_name}) 로드 중... (초기 1회는 다운로드로 인해 시간이 걸릴 수 있습니다)")
         # CrossEncoder 로드 (CPU 환경 기준, GPU가 있다면 device='cuda' 옵션 추가)
-        self.model = CrossEncoder(model_name, max_length=512, default_activation_function=None)
+        self.model = CrossEncoder(model_name, max_length=512, activation_fn=None)
         logger.info("Reranker 로드 완료!")
 
     async def forward(self, *, query: str, candidates: List[ScoredChunk], top_k: int) -> List[ScoredChunk]:
@@ -21,7 +22,8 @@ class LocalCrossEncoderReranker(RagReranker):
         sentence_pairs = [[query, doc.chunk.content] for doc in candidates]
 
         # 2. Cross-Encoder로 문맥 유사도를 정밀 채점
-        scores = self.model.predict(sentence_pairs)
+        # scores = self.model.predict(sentence_pairs)
+        scores = await asyncio.to_thread(self.model.predict, sentence_pairs)
 
         # 3. 기존 객체에 새로운 점수를 부여하고 정렬
         for i, doc in enumerate(candidates):

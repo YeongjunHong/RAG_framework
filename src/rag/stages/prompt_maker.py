@@ -4,7 +4,6 @@ from src.rag.core.types import RagRequest, RagContext
 from src.rag.core.interfaces import RagStage
 
 class PromptMakerConfig(BaseModel):
-    #  지시문을 훨씬 더 공격적이고 방어적으로 수정
     system_role: str = (
         "당신은 주어진 문서(CONTEXT)에 기반하여 질문에 답변하는 꼼꼼한 AI 어시스턴트입니다.\n"
         "답변을 작성할 때 반드시 다음 규칙을 엄격하게 지키세요:\n"
@@ -20,14 +19,18 @@ class PromptMakerStage(RagStage[PromptMakerConfig]):
 
     async def run(self, request: RagRequest, ctx: RagContext) -> RagContext:
         formatted_context = ""
-        for doc in ctx.reranked:
-            chunk_id = doc.chunk.chunk_id
-            content = doc.chunk.content
-            #  식별자를 LLM이 쉽게 인식하고 복사할 수 있는 특이한 포맷으로 변경
-            formatted_context += f"문서 식별자: [REF-{chunk_id}]\n내용: {content}\n\n"
-            
-        if not formatted_context:
-            formatted_context = ctx.packed_context
+        
+        # 1. reranked가 아닌 filtered 데이터를 사용하고, 통과(kept=True)한 것만 취합
+        if ctx.filtered:
+            for doc in ctx.filtered:
+                if doc.kept:
+                    chunk_id = doc.chunk.chunk_id
+                    content = doc.chunk.content
+                    formatted_context += f"문서 식별자: [REF-{chunk_id}]\n내용: {content}\n\n"
+        
+        # 2. 만약 필터링에서 모두 탈락했거나 데이터가 없다면 fallback 처리
+        if not formatted_context.strip():
+            formatted_context = ctx.packed_context or "제공된 문서 내용이 없습니다."
 
         ctx.prompt = (
             f"=== SYSTEM ===\n{self.config.system_role}\n\n"

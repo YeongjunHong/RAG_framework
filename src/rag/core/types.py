@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any, Dict, List, Literal, TypeVar
 from pydantic import BaseModel, Field
 
@@ -30,6 +31,7 @@ class FilteredChunk(BaseModel):
     chunk: SourceChunk
     kept: bool
     reasons: list[str] = []
+    score: float = 0.0 # 새롭게 추가
 
 
 class EvidenceGroup(BaseModel):
@@ -68,6 +70,12 @@ class RagContext(BaseModel):
     # Diagnostics
     timings_ms: Dict[str, float] = Field(default_factory=dict)
     errors: List[Dict[str, Any]] = Field(default_factory=list)
+
+    # 스트리밍을 위한 큐 (Pydantic 직렬화에서는 제외)
+    stream_queue: asyncio.Queue|None = Field(default=None, exclude=True)
+    
+    class Config:
+        arbitrary_types_allowed = True
 
 
 class RagRequest(BaseModel):
