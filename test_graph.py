@@ -121,7 +121,7 @@ async def main():
     ctx = RagContext(stream_queue=token_queue)
     state = {"request": request, "ctx": ctx}
 
-    print("파이프라인 실행 중 (Planner -> Prompt Maker -> Generator)...\n")
+    print("파이프라인 실행 중 ...\n")
     print("=" * 60)
     print("[최종 AI 답변] (스트리밍 중...)")
     
