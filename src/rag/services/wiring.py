@@ -30,14 +30,15 @@ def build_retriever_registry(**kwargs) -> registry.RetrieverRegistry:
     #     }
     )
 
+from src.rag.plugins.local_reranker import LocalCrossEncoderReranker
 
 def build_reranker_registry(**kwargs) -> registry.RerankerRegistry:
     return registry.RerankerRegistry(
         items={
-            "default": plugins.NoopReranker()
+            # "default": plugins.NoopReranker()
+            "default": LocalCrossEncoderReranker()
         }
     )
-
 
 def build_filterer_registry(**kwargs) -> registry.FiltererRegistry:
     return registry.FiltererRegistry()
