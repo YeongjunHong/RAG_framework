@@ -91,7 +91,7 @@ class FilteringConfig(BaseModel):
     # CrossEncoder의 Raw Logit을 사용 중이라면 0.0을 커트라인으로 하면 위험함. 
 
     # min_score: float = -5.0 
-    min_score: float = 0.70
+    min_score: float = 0.70 # eval_threshold의 결과 값
 
 class FilteringStage(RagStage[FilteringConfig]):
     name = "filtering"

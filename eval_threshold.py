@@ -11,7 +11,7 @@ from src.rag.plugins.postgres_retriever import PostgresHybridRetriever
 from src.rag.plugins.local_reranker import LocalCrossEncoderReranker
 
 # [평가용 샘플 데이터셋] 
-# 실제 서비스 수준의 평가를 원한다면 이 리스트를 20~30개 이상으로 늘리는 것을 권장해.
+# 실제 서비스 수준의 평가를 원한다면 이 리스트를 20~30개 이상으로 늘리는 것을 권장.
 EVAL_DATASET: List[Tuple[str, List[int]]] = [
     ("BC카드 고객센터 전화번호 알려줘", [68446, 68904]),
     ("신용카드 리볼빙의 단점이 뭐야?", [85762]),
