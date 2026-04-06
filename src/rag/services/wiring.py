@@ -147,6 +147,7 @@ from src.rag.services.registry import RetrieverRegistry
 from src.rag.plugins.postgres_retriever import PostgresHybridRetriever
 from src.rag.plugins.local_reranker import LocalCrossEncoderReranker
 from src.rag.plugins.slm_planner import CloudSlmPlanner
+from src.rag.plugins.noop import NoopPostChecker # post_check
 
 def build_planner_registry(**kwargs) -> registry.PlannerRegistry:
     return registry.PlannerRegistry(
@@ -192,5 +193,13 @@ def build_promptmaker_registry(**kwargs) -> registry.PromptMakerRegistry:
 def build_generator_registry(**kwargs) -> registry.GeneratorRegistry:
     return registry.GeneratorRegistry()
 
+# def build_postchecker_registry(**kwargs) -> registry.PostCheckerRegistry:
+#     return registry.PostCheckerRegistry()
+
 def build_postchecker_registry(**kwargs) -> registry.PostCheckerRegistry:
-    return registry.PostCheckerRegistry()
+    return registry.PostCheckerRegistry(
+        items={
+            "default": NoopPostChecker(),
+            "noop": NoopPostChecker()
+        }
+    )
