@@ -50,7 +50,8 @@ class SourceChunkVec(TableBase):
     __tablename__ = "source_chunk_vec"
 
     chunk_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("source_chunk.id", ondelete="CASCADE"))
-    chunk_vec: Mapped[Any] = mapped_column(Vector(1536))
+    # chunk_vec: Mapped[Any] = mapped_column(Vector(1536))
+    chunk_vec: Mapped[Any] = mapped_column(Vector(768))
     vec_model_name: Mapped[str] = mapped_column(String(50))
 
     __table_args__ = (
