@@ -67,6 +67,7 @@ RAG 파이프라인의 각 단계를 독립적인 책임 단위로 분리한 실
 
 ## 4. 구조도 
 
+```
 RAG_FRAMEWORK/
 ├── .venv/
 ├── .vscode/
@@ -132,3 +133,5 @@ RAG_FRAMEWORK/
 ├── test_api.py
 ├── test_graph.py
 └── test_retriever.py
+
+```
