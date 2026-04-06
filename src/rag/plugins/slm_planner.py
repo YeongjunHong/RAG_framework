@@ -91,23 +91,25 @@ class CloudSlmPlanner(RagPlanner):
         [분류 기준]
         1. intent: 
            - "chitchat": 인사, 감정 표현 등 지식 검색이 필요 없는 일상 대화
-           - "simple_search": 전화번호, 운영시간, 주소, 위치 등 단답형 팩트 검색 (리랭커 연산 생략 목적)
-           - "search": 원리 설명, 장단점 분석, 영향 등 복잡한 문서 검토와 추론이 필요한 질문
+           - "simple_search": 전화번호, 운영시간, 주소, 위치 등 단답형 팩트 검색
+           - "search": 원리 설명, 장단점 분석, 영향 등 복잡한 문서 검토와 추론이 필요한 일반 질문
+           - "authoring": 교육 자료, 리포트, 가이드 문서 작성 등 정보의 100% 무결성과 엄격한 검증이 요구되는 생성 작업
         2. requires_db: true (DB 검색 필수) | false (DB 검색 불필요)
         3. complexity: "low" (간단한 답변) | "high" (복잡한 추론 필요)
+        4. strict_validation: true (환각 절대 불가, 엄격한 검증) | false (일반적인 유연한 답변)
 
         [출력 예시]
         User: 안녕하세요. 오늘 날씨 좋네요.
-        Assistant: {{"intent": "chitchat", "requires_db": false, "complexity": "low"}}
+        Assistant: {{"intent": "chitchat", "requires_db": false, "complexity": "low", "strict_validation": false}}
 
         User: 국민카드 고객센터 운영시간 언제부터야?
-        Assistant: {{"intent": "simple_search", "requires_db": true, "complexity": "low"}}
-
-        User: BC카드 분실신고 전화번호 알려주세요.
-        Assistant: {{"intent": "simple_search", "requires_db": true, "complexity": "low"}}
+        Assistant: {{"intent": "simple_search", "requires_db": true, "complexity": "low", "strict_validation": false}}
 
         User: 금리 인상이 부동산 대출에 미치는 영향을 설명해줘.
-        Assistant: {{"intent": "search", "requires_db": true, "complexity": "high"}}
+        Assistant: {{"intent": "search", "requires_db": true, "complexity": "high", "strict_validation": false}}
+
+        User: 제공된 문서들을 바탕으로 신입사원을 위한 금융 보안 가이드 문서를 작성해줘.
+        Assistant: {{"intent": "authoring", "requires_db": true, "complexity": "high", "strict_validation": true}}
 
         [사용자 질문]: {query}
         """

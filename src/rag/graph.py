@@ -421,7 +421,12 @@ def build_graph():
     pck = PackingStage(PackingConfig(), tracer=tracer)
     pm = PromptMakerStage(PromptMakerConfig())
     gen = GeneratorStage(GeneratorConfig(), llm=llm, tracer=tracer)
-    pc = PostCheckStage(PostCheckConfig(enable_guardrails=False))
+    # pc = PostCheckStage(PostCheckConfig(enable_guardrails=False))
+    pc = PostCheckStage(
+        PostCheckConfig(), 
+        guardrails_plugin=postchecker_registry.get("default"), 
+        tracer=tracer
+    )
 
     # --- Node 래퍼 함수들 ---
     async def node_planner(state: GraphState) -> GraphState:
@@ -549,4 +554,5 @@ def build_graph():
 async def run_graph(app, request: RagRequest) -> RagResponse:
     state: GraphState = {"request": request, "ctx": RagContext()}
     out = await app.ainvoke(state)
-    return to_response(out["request"], out["ctx"])
+    # return to_response(out["request"], out["ctx"])
+    return to_response(out)["response"]
