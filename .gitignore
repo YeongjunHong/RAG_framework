@@ -23,6 +23,13 @@ dist/
 logs/
 reports/
 
-
-#세팅 폴더 제거 
+# 세팅 폴더 제거 
 /settings/
+
+# --- [데모 및 테스트 스크립트 제외] ---
+run_demo.py
+run_showcase.py
+test_api.py
+test_graph.py
+test_retriever.py
+find_ground_truth.py

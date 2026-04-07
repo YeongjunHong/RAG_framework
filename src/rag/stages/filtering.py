@@ -132,78 +132,167 @@
 #         logger.info(f"[{self.name}] 필터링 완료: {len(ctx.reranked)}건 중 {kept_count}건 유지 (Threshold: {self.config.min_score})")
 #         return ctx
 
+# import json
+# from pathlib import Path
+# from pydantic import BaseModel
+# from typing import Dict
+
+# from src.rag.core.types import RagRequest, RagContext, FilteredChunk
+# from src.rag.core.interfaces import RagStage
+# from src.common.logger import get_logger
+
+# logger = get_logger(__name__)
+
+# class FilteringConfig(BaseModel):
+#     thresholds_file: str = "settings/dynamic_thresholds.json"
+#     default_min_score: float = 0.50
+
+# class FilteringStage(RagStage[FilteringConfig]):
+#     name = "filtering"
+
+#     def __init__(self, config: FilteringConfig):
+#         super().__init__(config)
+#         self.thresholds_map = self._load_threshold_artifact()
+
+#     def _load_threshold_artifact(self) -> Dict[str, float]:
+#         """평가 파이프라인에서 생성한 Threshold 아티팩트 로드"""
+#         artifact_path = Path(self.config.thresholds_file)
+#         if not artifact_path.exists():
+#             logger.warning(f"Threshold 아티팩트를 찾을 수 없습니다: {artifact_path}. 기본값을 사용합니다.")
+#             return {}
+            
+#         try:
+#             with open(artifact_path, "r") as f:
+#                 thresholds = json.load(f)
+#             logger.info(f"동적 Threshold 맵 로드 완료: {thresholds}")
+#             return thresholds
+#         except Exception as e:
+#             logger.error(f"Threshold 아티팩트 파싱 실패: {e}. 기본값을 사용합니다.")
+#             return {}
+
+#     async def run(self, request: RagRequest, ctx: RagContext) -> RagContext:
+#         if getattr(ctx, "skip_reranker", False) or not ctx.reranked:
+#             logger.info(f"[{self.name}] 필터링 스킵 또는 리랭크된 데이터 없음.")
+#             return ctx
+
+#         current_intent = getattr(ctx, "intent", "default")
+#         # 인텐트에 맞는 Threshold 추출 (없으면 default, 그것도 없으면 config 기본값)
+#         active_threshold = self.thresholds_map.get(
+#             current_intent, 
+#             self.thresholds_map.get("default", self.config.default_min_score)
+#         )
+#         # [추가된 로깅] 최고 점수 확인
+#         if ctx.reranked:
+#             max_score = ctx.reranked[0].score
+#             logger.info(f"[{self.name}] 현재 Reranker 최고 점수: {max_score:.4f} / 요구 Threshold: {active_threshold:.4f}")
+
+#         filtered_results = []
+#         kept_count = 0
+
+#         for scored_chunk in ctx.reranked:
+#             is_kept = scored_chunk.score >= active_threshold
+#             reasons = [] if is_kept else [f"Score({scored_chunk.score:.4f}) < Min({active_threshold})"]
+            
+#             filtered_results.append(FilteredChunk(
+#                 chunk=scored_chunk.chunk,
+#                 kept=is_kept,
+#                 reasons=reasons,
+#                 score=scored_chunk.score
+#             ))
+#             if is_kept:
+#                 kept_count += 1
+
+#         if kept_count == 0 and filtered_results:
+#             logger.warning(f"[{self.name}] 모든 문서가 탈락하여 Top-1 문서를 구출합니다.")
+#             filtered_results[0].kept = True
+#             filtered_results[0].reasons = ["Forced Rescue"]
+#             kept_count = 1
+
+#         ctx.filtered = filtered_results
+#         logger.info(f"[{self.name}] 인텐트 '{current_intent}' 필터링 완료: {len(ctx.reranked)}건 중 {kept_count}건 유지 (Threshold: {active_threshold})")
+#         return ctx
+
 import json
 from pathlib import Path
-from pydantic import BaseModel
-from typing import Dict
+from pydantic import BaseModel, Field
+from typing import Dict, List
 
-from src.rag.core.types import RagRequest, RagContext, FilteredChunk
+from src.rag.core.types import RagRequest, RagContext, FilteredChunk, ScoredChunk
 from src.rag.core.interfaces import RagStage
 from src.common.logger import get_logger
 
 logger = get_logger(__name__)
 
+class IntentFilterRule(BaseModel):
+    relative_margin: float = 0.15  # 1등 점수 대비 허용 편차
+    min_k: int = 1                 # 컨텍스트 기아 방지 최소 보장 개수
+    max_k: int = 10                # 토큰 낭비 방지 최대 허용 개수
+
 class FilteringConfig(BaseModel):
     thresholds_file: str = "settings/dynamic_thresholds.json"
-    default_min_score: float = 0.50
+    default_floor: float = 0.30
+    
+    # 인텐트별 하이브리드 룰 정의
+    rules: Dict[str, IntentFilterRule] = Field(default_factory=lambda: {
+        "simple_search": IntentFilterRule(relative_margin=0.05, min_k=1, max_k=3), # 핀포인트
+        "search": IntentFilterRule(relative_margin=0.15, min_k=2, max_k=7),        # 일반 검색
+        "authoring": IntentFilterRule(relative_margin=0.20, min_k=4, max_k=15),    # 넓은 문맥
+        "default": IntentFilterRule(relative_margin=0.15, min_k=1, max_k=5)
+    })
 
 class FilteringStage(RagStage[FilteringConfig]):
     name = "filtering"
 
     def __init__(self, config: FilteringConfig):
         super().__init__(config)
-        self.thresholds_map = self._load_threshold_artifact()
+        self.floor_map = self._load_threshold_artifact()
 
     def _load_threshold_artifact(self) -> Dict[str, float]:
-        """평가 파이프라인에서 생성한 Threshold 아티팩트 로드"""
         artifact_path = Path(self.config.thresholds_file)
         if not artifact_path.exists():
-            logger.warning(f"Threshold 아티팩트를 찾을 수 없습니다: {artifact_path}. 기본값을 사용합니다.")
             return {}
-            
         try:
             with open(artifact_path, "r") as f:
-                thresholds = json.load(f)
-            logger.info(f"동적 Threshold 맵 로드 완료: {thresholds}")
-            return thresholds
-        except Exception as e:
-            logger.error(f"Threshold 아티팩트 파싱 실패: {e}. 기본값을 사용합니다.")
+                return json.load(f)
+        except Exception:
             return {}
 
     async def run(self, request: RagRequest, ctx: RagContext) -> RagContext:
         if getattr(ctx, "skip_reranker", False) or not ctx.reranked:
-            logger.info(f"[{self.name}] 필터링 스킵 또는 리랭크된 데이터 없음.")
             return ctx
 
         current_intent = getattr(ctx, "intent", "default")
-        # 인텐트에 맞는 Threshold 추출 (없으면 default, 그것도 없으면 config 기본값)
-        active_threshold = self.thresholds_map.get(
-            current_intent, 
-            self.thresholds_map.get("default", self.config.default_min_score)
-        )
+        floor_score = self.floor_map.get(current_intent, self.floor_map.get("default", self.config.default_floor))
+        rule = self.config.rules.get(current_intent, self.config.rules["default"])
 
-        filtered_results = []
-        kept_count = 0
+        logger.info(f"[{self.name}] 하이브리드 필터링 적용 (Intent: {current_intent}, Floor: {floor_score:.2f}, MinK: {rule.min_k})")
 
-        for scored_chunk in ctx.reranked:
-            is_kept = scored_chunk.score >= active_threshold
-            reasons = [] if is_kept else [f"Score({scored_chunk.score:.4f}) < Min({active_threshold})"]
-            
-            filtered_results.append(FilteredChunk(
-                chunk=scored_chunk.chunk,
-                kept=is_kept,
-                reasons=reasons,
-                score=scored_chunk.score
-            ))
-            if is_kept:
-                kept_count += 1
+        # 1. 절대 하한선 방어 (Floor Cutoff)
+        survivors_step1: List[ScoredChunk] = [c for c in ctx.reranked if c.score >= floor_score]
 
-        if kept_count == 0 and filtered_results:
-            logger.warning(f"[{self.name}] 모든 문서가 탈락하여 Top-1 문서를 구출합니다.")
-            filtered_results[0].kept = True
-            filtered_results[0].reasons = ["Forced Rescue"]
-            kept_count = 1
+        if not survivors_step1:
+            logger.warning(f"[{self.name}] 모든 문서가 하한선({floor_score:.2f}) 미달. 빈 컨텍스트를 반환합니다.")
+            ctx.filtered = []
+            return ctx
 
-        ctx.filtered = filtered_results
-        logger.info(f"[{self.name}] 인텐트 '{current_intent}' 필터링 완료: {len(ctx.reranked)}건 중 {kept_count}건 유지 (Threshold: {active_threshold})")
+        # 2. 상대적 품질 제어 (Relative Margin)
+        max_score = survivors_step1[0].score
+        relative_threshold = max_score - rule.relative_margin
+        
+        survivors_step2: List[ScoredChunk] = [c for c in survivors_step1 if c.score >= relative_threshold]
+
+        # 3. 체급 보장 (Min/Max K)
+        if len(survivors_step2) < rule.min_k:
+            logger.info(f"[{self.name}] Min K({rule.min_k}) 보장을 위해 하한선 통과 문서 중 일부를 강제 편입합니다.")
+            final_chunks = survivors_step1[:rule.min_k]
+        else:
+            final_chunks = survivors_step2[:rule.max_k]
+
+        # FilteredChunk 객체로 래핑하여 컨텍스트에 저장
+        ctx.filtered = [
+            FilteredChunk(chunk=c.chunk, kept=True, reasons=["Hybrid Filter Pass"], score=c.score)
+            for c in final_chunks
+        ]
+        
+        logger.info(f"[{self.name}] 필터링 완료: {len(ctx.filtered)}개 문서 유지 (최고 점수: {max_score:.4f})")
         return ctx

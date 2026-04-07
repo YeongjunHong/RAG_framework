@@ -68,6 +68,12 @@ class PostCheckStage(RagStage[PostCheckConfig]):
         self.tracer = tracer
 
     async def run(self, request: RagRequest, ctx: RagContext) -> RagContext:
+        # [추가된 방어 로직]
+        if getattr(ctx, "intent", "") == "chitchat":
+            logger.info(f"[{self.name}] Chitchat 인텐트이므로 Guardrails 검증을 스킵합니다.")
+            ctx.postcheck = {"is_valid": True, "reason": "Chitchat bypass"}
+            return ctx
+        
         with self.tracer.span("post_check", provider=self.config.provider):
             
             # 검증 실행 (공통)

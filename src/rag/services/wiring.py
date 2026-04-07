@@ -148,6 +148,8 @@ from src.rag.plugins.postgres_retriever import PostgresHybridRetriever
 from src.rag.plugins.local_reranker import LocalCrossEncoderReranker
 from src.rag.plugins.slm_planner import CloudSlmPlanner
 from src.rag.plugins.noop import NoopPostChecker # post_check
+from src.rag.plugins.guardrails_runner import CompositeGuardrails
+from src.rag.plugins.router import build_llm
 
 def build_planner_registry(**kwargs) -> registry.PlannerRegistry:
     return registry.PlannerRegistry(
@@ -196,10 +198,26 @@ def build_generator_registry(**kwargs) -> registry.GeneratorRegistry:
 # def build_postchecker_registry(**kwargs) -> registry.PostCheckerRegistry:
 #     return registry.PostCheckerRegistry()
 
+# def build_postchecker_registry(**kwargs) -> registry.PostCheckerRegistry:
+#     return registry.PostCheckerRegistry(
+#         items={
+#             "default": NoopPostChecker(),
+#             "noop": NoopPostChecker()
+#         }
+#     )
 def build_postchecker_registry(**kwargs) -> registry.PostCheckerRegistry:
+    # 1. 판관(Judge) 역할을 할 LLM 인스턴스 초기화
+    # 비용/속도를 최적화하려면 여기서 별도의 가벼운 모델(gpt-4o-mini 등)을 세팅해도 된다.
+    # 지금은 범용성을 위해 기존 시스템의 LLM을 그대로 주입한다.
+    judge_llm = build_llm()
+
+    # 2. 레지스트리에 등록
     return registry.PostCheckerRegistry(
         items={
-            "default": NoopPostChecker(),
+            # 프로덕션/데모 실행 시 기본적으로 작동할 복합 검증기
+            "default": CompositeGuardrails(judge_llm=judge_llm),
+            
+            # 장애 발생 시나 테스트 목적을 위한 Bypass(안전망) 용도
             "noop": NoopPostChecker()
         }
     )

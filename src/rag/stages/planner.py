@@ -237,11 +237,14 @@ class PlannerStage(RagStage[PlannerConfig]):
 
     def _semantic_route(self, query: str) -> dict | None:
         """가벼운 정규식/키워드 기반의 프론트도어 시맨틱 라우터 (L7 필터 역할)"""
+        # 특수문자만 제거하고 띄어쓰기는 살림 (정규식 오작동 방지)
         clean_query = re.sub(r'[^\w\s]', '', query).strip()
         
         chitchat_patterns = [
-            r"^(안녕|안녕하세요|반가워|누구야|너는|하이|hello|hi)",
-            r"(어떤 일|뭐 할 수|뭐해|뭐하시)"
+            r"^(안녕|안녕하세요|반가워|누구야|hello|hi)\b", 
+            r"^(하이|하이요|하이하이)$",  # '하이'는 독립적으로 쓰일 때만 매칭 ('하이브리드' 방어)
+            r"^(너는 누구|너의 이름은)",
+            r"(어떤 일|뭐 할 수|뭐해|뭐하시|어때)$"
         ]
         
         for pattern in chitchat_patterns:
@@ -254,7 +257,7 @@ class PlannerStage(RagStage[PlannerConfig]):
                     "routed_by": "semantic_frontdoor"
                 }
                 
-        return None 
+        return None
 
     def _apply_routing_flags(self, ctx: RagContext, plan: dict, request: RagRequest) -> None:
         """분석된 plan 딕셔너리를 바탕으로 Context의 라우팅 플래그를 설정"""
