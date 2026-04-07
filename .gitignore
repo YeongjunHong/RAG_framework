@@ -33,3 +33,4 @@ test_api.py
 test_graph.py
 test_retriever.py
 find_ground_truth.py
+tests/connection_test.py
