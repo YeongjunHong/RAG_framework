@@ -355,9 +355,214 @@
 #     out = await app.ainvoke(state)
 #     return to_response(out["request"], out["ctx"])
 
+# from typing import TypedDict
+
+# from .core.types import SourceChunk, RagRequest, RagResponse, RagContext
+# from .stages.planner import PlannerStage, PlannerConfig
+# from .stages.query_expansion import QueryExpansionStage, QueryExpansionConfig
+# from .stages.retrieval import RetrievalStage, RetrievalConfig
+# from .stages.reranking import RerankingStage, RerankingConfig
+# from .stages.filtering import FilteringStage, FilteringConfig
+# from .stages.assembly import AssemblyStage, AssemblyConfig
+# from .stages.compression import CompressionStage, CompressionConfig
+# from .stages.packing import PackingStage, PackingConfig
+# from .stages.prompt_maker import PromptMakerStage, PromptMakerConfig
+# from .stages.generator import GeneratorStage, GeneratorConfig
+# from .stages.post_check import PostCheckStage, PostCheckConfig, to_response
+# from .plugins.router import build_llm
+# from .plugins.tracing import build_tracer
+# from .plugins.noop import NoopReranker
+# from .plugins.inmemory import InMemoryRetriever
+# import src.rag.services.wiring as wiring
+# from src.common.logger import get_logger
+
+# logger = get_logger(__name__)
+
+# class GraphState(TypedDict):
+#     request: RagRequest
+#     ctx: RagContext
+
+# def build_graph():
+#     from langgraph.graph import StateGraph, END
+
+#     tracer = build_tracer()
+#     llm = build_llm()
+
+#     # Registry 조립
+#     planner_registry = wiring.build_planner_registry()
+#     query_expander_registry = wiring.build_query_expander_registry()
+#     retriever_registry = wiring.build_retriever_registry()
+#     reranker_registry = wiring.build_reranker_registry()
+#     filterer_registry = wiring.build_filterer_registry()
+#     assembler_registry = wiring.build_assembler_registry()
+#     compressor_registry = wiring.build_compressor_registry()
+#     packer_registry = wiring.build_packer_registry()
+#     promptmaker_registry = wiring.build_promptmaker_registry()
+#     generator_registry = wiring.build_generator_registry()
+#     postchecker_registry = wiring.build_postchecker_registry()
+
+#     # 테스트 및 디버깅용 Mock 데이터 
+#     # sample_chunks = [
+#     #     SourceChunk(chunk_id=1, source_id=1, source_name="mock", content="샘플 컨텍스트입니다. pgvector, bm25, tsvector를 함께 씁니다.", metadata={}),
+#     #     SourceChunk(chunk_id=2, source_id=1, source_name="mock", content="LangGraph로 agentic routing를 구현할 계획입니다.", metadata={}),
+#     # ]
+#     # if hasattr(retriever_registry.items["default"], "_chunks"):
+#     #     retriever_registry.items["default"]._chunks = sample_chunks
+
+#     # Stages 인스턴스화
+#     pln = PlannerStage(PlannerConfig(), registry=planner_registry, tracer=tracer)
+#     qx = QueryExpansionStage(QueryExpansionConfig())
+#     rt = RetrievalStage(RetrievalConfig(), registry=retriever_registry, tracer=tracer)
+#     rr = RerankingStage(RerankingConfig(), registry=reranker_registry, tracer=tracer)
+#     # flt = FilteringStage(FilteringConfig(min_score=0.0))
+#     flt = FilteringStage(FilteringConfig())
+#     asm = AssemblyStage(AssemblyConfig())
+#     cmp = CompressionStage(CompressionConfig())
+#     pck = PackingStage(PackingConfig(), tracer=tracer)
+#     pm = PromptMakerStage(PromptMakerConfig())
+#     gen = GeneratorStage(GeneratorConfig(), llm=llm, tracer=tracer)
+#     # pc = PostCheckStage(PostCheckConfig(enable_guardrails=False))
+#     pc = PostCheckStage(
+#         PostCheckConfig(), 
+#         guardrails_plugin=postchecker_registry.get("default"), 
+#         tracer=tracer
+#     )
+
+#     # --- Node 래퍼 함수들 ---
+#     async def node_planner(state: GraphState) -> GraphState:
+#         req, ctx = state["request"], state["ctx"]
+#         await pln(req, ctx)
+#         return state
+
+#     async def node_query_expansion(state: GraphState) -> GraphState:
+#         req, ctx = state["request"], state["ctx"]
+#         await qx(req, ctx)
+#         return state
+
+#     async def node_retrieval(state: GraphState) -> GraphState:
+#         req, ctx = state["request"], state["ctx"]
+#         await rt(req, ctx)
+#         return state
+
+#     async def node_reranking(state: GraphState) -> GraphState:
+#         req, ctx = state["request"], state["ctx"]
+#         await rr(req, ctx)
+#         return state
+
+#     async def node_filtering(state: GraphState) -> GraphState:
+#         req, ctx = state["request"], state["ctx"]
+#         await flt(req, ctx)
+#         return state
+
+#     async def node_assembly(state: GraphState) -> GraphState:
+#         req, ctx = state["request"], state["ctx"]
+#         await asm(req, ctx)
+#         return state
+
+#     async def node_compression(state: GraphState) -> GraphState:
+#         req, ctx = state["request"], state["ctx"]
+#         await cmp(req, ctx)
+#         return state
+
+#     async def node_packing(state: GraphState) -> GraphState:
+#         req, ctx = state["request"], state["ctx"]
+#         await pck(req, ctx)
+#         return state
+
+#     async def node_prompt_maker(state: GraphState) -> GraphState:
+#         req, ctx = state["request"], state["ctx"]
+#         await pm(req, ctx)
+#         return state
+
+#     async def node_generator(state: GraphState) -> GraphState:
+#         req, ctx = state["request"], state["ctx"]
+#         await gen(req, ctx)
+#         return state
+
+#     async def node_post_check(state: GraphState) -> GraphState:
+#         req, ctx = state["request"], state["ctx"]
+#         await pc(req, ctx)
+#         return state
+
+#     # --- 라우팅 (Conditional Edge) 로직 ---
+#     def route_after_planner(state: GraphState) -> str:
+#         ctx = state["ctx"]
+        
+#         # Planner가 검색 생략을 결정한 경우 (인사말 등)
+#         if getattr(ctx, "skip_retrieval", False):
+#             logger.info("[Router] 검색 파이프라인 스킵 -> Prompt Maker 직행")
+#             return "prompt_maker"
+            
+#         logger.info("[Router] 검색 파이프라인 진입 -> Query Expansion")
+#         return "query_expansion"
+
+#     def route_after_retrieval(state: GraphState) -> str:
+#         ctx = state["ctx"]
+        
+#         # Planner가 무거운 리랭커 연산을 생략하기로 결정한 경우 (단순 정보 검색 등)
+#         if getattr(ctx, "skip_reranker", False):
+#             logger.info("[Router] Reranker 스킵 -> Assembly 직행")
+#             return "assembly"
+            
+#         logger.info("[Router] Reranker 파이프라인 진입")
+#         return "reranking"
+
+#     # --- LangGraph 조립 ---
+#     g = StateGraph(GraphState)
+
+#     # 1. 노드 등록
+#     g.add_node("planner", node_planner)
+#     g.add_node("query_expansion", node_query_expansion)
+#     g.add_node("retrieval", node_retrieval)
+#     g.add_node("reranking", node_reranking)
+#     g.add_node("filtering", node_filtering)
+#     g.add_node("assembly", node_assembly)
+#     g.add_node("compression", node_compression)
+#     g.add_node("packing", node_packing)
+#     g.add_node("prompt_maker", node_prompt_maker)
+#     g.add_node("generator", node_generator)
+#     g.add_node("post_check", node_post_check)
+
+#     # 2. 시작점
+#     g.set_entry_point("planner")
+    
+#     # 3. 조건부 엣지 (다중 분기 처리)
+#     g.add_conditional_edges("planner", route_after_planner, {
+#         "query_expansion": "query_expansion", 
+#         "prompt_maker": "prompt_maker",        
+#     })
+
+#     g.add_conditional_edges("retrieval", route_after_retrieval, {
+#         "reranking": "reranking",
+#         "assembly": "assembly", 
+#     })
+
+#     # 4. 선형 파이프라인 엣지
+#     g.add_edge("query_expansion", "retrieval")
+#     # retrieval 이후는 조건부 엣지로 처리되므로 여기서는 제외
+#     g.add_edge("reranking", "filtering")
+#     g.add_edge("filtering", "assembly")
+#     g.add_edge("assembly", "compression")
+#     g.add_edge("compression", "packing")
+#     g.add_edge("packing", "prompt_maker")
+#     g.add_edge("prompt_maker", "generator")
+#     g.add_edge("generator", "post_check")
+#     g.add_edge("post_check", END)
+
+#     return g.compile()
+
+# async def run_graph(app, request: RagRequest) -> RagResponse:
+#     state: GraphState = {"request": request, "ctx": RagContext()}
+#     out = await app.ainvoke(state)
+#     # return to_response(out["request"], out["ctx"])
+#     return to_response(out)["response"]
+
+
 from typing import TypedDict
+from langgraph.graph import StateGraph, END
 
 from .core.types import SourceChunk, RagRequest, RagResponse, RagContext
+from .stages.input_guard import InputGuardStage
 from .stages.planner import PlannerStage, PlannerConfig
 from .stages.query_expansion import QueryExpansionStage, QueryExpansionConfig
 from .stages.retrieval import RetrievalStage, RetrievalConfig
@@ -369,10 +574,9 @@ from .stages.packing import PackingStage, PackingConfig
 from .stages.prompt_maker import PromptMakerStage, PromptMakerConfig
 from .stages.generator import GeneratorStage, GeneratorConfig
 from .stages.post_check import PostCheckStage, PostCheckConfig, to_response
+
 from .plugins.router import build_llm
 from .plugins.tracing import build_tracer
-from .plugins.noop import NoopReranker
-from .plugins.inmemory import InMemoryRetriever
 import src.rag.services.wiring as wiring
 from src.common.logger import get_logger
 
@@ -388,7 +592,12 @@ def build_graph():
     tracer = build_tracer()
     llm = build_llm()
 
+    # DB 세션 메이커 조립 (추가)
+    db_session_maker = wiring.build_db_session_maker()
+
     # Registry 조립
+    # 신규: InputGuard 레지스트리 추가
+    input_guard_registry = wiring.build_input_guard_registry()
     planner_registry = wiring.build_planner_registry()
     query_expander_registry = wiring.build_query_expander_registry()
     retriever_registry = wiring.build_retriever_registry()
@@ -401,27 +610,20 @@ def build_graph():
     generator_registry = wiring.build_generator_registry()
     postchecker_registry = wiring.build_postchecker_registry()
 
-    # 테스트 및 디버깅용 Mock 데이터 
-    # sample_chunks = [
-    #     SourceChunk(chunk_id=1, source_id=1, source_name="mock", content="샘플 컨텍스트입니다. pgvector, bm25, tsvector를 함께 씁니다.", metadata={}),
-    #     SourceChunk(chunk_id=2, source_id=1, source_name="mock", content="LangGraph로 agentic routing를 구현할 계획입니다.", metadata={}),
-    # ]
-    # if hasattr(retriever_registry.items["default"], "_chunks"):
-    #     retriever_registry.items["default"]._chunks = sample_chunks
-
     # Stages 인스턴스화
+    # 1. Input Guard (레지스트리 주입 방식으로 변경)
+    ig = InputGuardStage(registry=input_guard_registry, tracer=tracer,db_session_maker=db_session_maker)
+
     pln = PlannerStage(PlannerConfig(), registry=planner_registry, tracer=tracer)
     qx = QueryExpansionStage(QueryExpansionConfig())
     rt = RetrievalStage(RetrievalConfig(), registry=retriever_registry, tracer=tracer)
     rr = RerankingStage(RerankingConfig(), registry=reranker_registry, tracer=tracer)
-    # flt = FilteringStage(FilteringConfig(min_score=0.0))
     flt = FilteringStage(FilteringConfig())
     asm = AssemblyStage(AssemblyConfig())
     cmp = CompressionStage(CompressionConfig())
     pck = PackingStage(PackingConfig(), tracer=tracer)
     pm = PromptMakerStage(PromptMakerConfig())
     gen = GeneratorStage(GeneratorConfig(), llm=llm, tracer=tracer)
-    # pc = PostCheckStage(PostCheckConfig(enable_guardrails=False))
     pc = PostCheckStage(
         PostCheckConfig(), 
         guardrails_plugin=postchecker_registry.get("default"), 
@@ -429,6 +631,11 @@ def build_graph():
     )
 
     # --- Node 래퍼 함수들 ---
+    async def node_input_guard(state: GraphState) -> GraphState:
+        req, ctx = state["request"], state["ctx"]
+        await ig(req, ctx)
+        return state
+
     async def node_planner(state: GraphState) -> GraphState:
         req, ctx = state["request"], state["ctx"]
         await pln(req, ctx)
@@ -485,12 +692,17 @@ def build_graph():
         return state
 
     # --- 라우팅 (Conditional Edge) 로직 ---
+    def route_after_input_guard(state: GraphState) -> str:
+        ctx = state["ctx"]
+        if not ctx.input_guard.is_safe:
+            logger.warning(f"[Router] InputGuard 보안 위반 감지 -> Prompt Maker로 우회")
+            return "prompt_maker"
+        return "planner"
+
     def route_after_planner(state: GraphState) -> str:
         ctx = state["ctx"]
-        
-        # Planner가 검색 생략을 결정한 경우 (인사말 등)
-        if getattr(ctx, "skip_retrieval", False):
-            logger.info("[Router] 검색 파이프라인 스킵 -> Prompt Maker 직행")
+        if ctx.intent == "security_violation" or getattr(ctx, "skip_retrieval", False):
+            logger.info(f"[Router] {ctx.intent} 의도 감지 -> Prompt Maker 직행")
             return "prompt_maker"
             
         logger.info("[Router] 검색 파이프라인 진입 -> Query Expansion")
@@ -498,12 +710,9 @@ def build_graph():
 
     def route_after_retrieval(state: GraphState) -> str:
         ctx = state["ctx"]
-        
-        # Planner가 무거운 리랭커 연산을 생략하기로 결정한 경우 (단순 정보 검색 등)
         if getattr(ctx, "skip_reranker", False):
             logger.info("[Router] Reranker 스킵 -> Assembly 직행")
             return "assembly"
-            
         logger.info("[Router] Reranker 파이프라인 진입")
         return "reranking"
 
@@ -511,6 +720,7 @@ def build_graph():
     g = StateGraph(GraphState)
 
     # 1. 노드 등록
+    g.add_node("input_guard", node_input_guard)
     g.add_node("planner", node_planner)
     g.add_node("query_expansion", node_query_expansion)
     g.add_node("retrieval", node_retrieval)
@@ -523,10 +733,15 @@ def build_graph():
     g.add_node("generator", node_generator)
     g.add_node("post_check", node_post_check)
 
-    # 2. 시작점
-    g.set_entry_point("planner")
+    # 2. 시작점 설정 (Entry Point)
+    g.set_entry_point("input_guard")
     
-    # 3. 조건부 엣지 (다중 분기 처리)
+    # 3. 조건부 엣지
+    g.add_conditional_edges("input_guard", route_after_input_guard, {
+        "planner": "planner",
+        "prompt_maker": "prompt_maker"
+    })
+
     g.add_conditional_edges("planner", route_after_planner, {
         "query_expansion": "query_expansion", 
         "prompt_maker": "prompt_maker",        
@@ -539,7 +754,6 @@ def build_graph():
 
     # 4. 선형 파이프라인 엣지
     g.add_edge("query_expansion", "retrieval")
-    # retrieval 이후는 조건부 엣지로 처리되므로 여기서는 제외
     g.add_edge("reranking", "filtering")
     g.add_edge("filtering", "assembly")
     g.add_edge("assembly", "compression")
@@ -554,5 +768,4 @@ def build_graph():
 async def run_graph(app, request: RagRequest) -> RagResponse:
     state: GraphState = {"request": request, "ctx": RagContext()}
     out = await app.ainvoke(state)
-    # return to_response(out["request"], out["ctx"])
     return to_response(out)["response"]
