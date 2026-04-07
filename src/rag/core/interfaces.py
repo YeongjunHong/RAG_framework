@@ -3,10 +3,18 @@ import asyncio  # 추가
 from typing import List, Sequence, Generic, TypeVar, Any, Dict
 import time
 
-from .types import ScoredChunk, ExpandedQuery, FilteredChunk, EvidenceGroup, RagRequest, RagContext, TConfig
+from .types import ScoredChunk, ExpandedQuery, FilteredChunk, EvidenceGroup, RagRequest, RagContext, TConfig, InputGuardResponse # InputGuardResponse 추가
 
 
 TInterface = TypeVar("TInterface", bound=ABC)
+
+
+class RagInputGuard(ABC):
+    """Input security port for prompt injection and PII detection."""
+    @abstractmethod
+    async def forward(self, query: str) -> InputGuardResponse:
+        """사용자 질문의 보안성 검사 수행"""
+        raise NotImplementedError
 
 class RagPlanner(ABC):
     """Planner port for intent classification and routing strategy."""
