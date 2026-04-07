@@ -137,3 +137,20 @@ class SourceKnowledge(SourceTableBase):
 
     # opt
     category: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+# 공격 패턴을 db에 저장하고 
+class RagExecutionLog(TableBase):
+    __tablename__ = "rag_execution_log"
+
+    trace_id: Mapped[str] = mapped_column(String(100), unique=True, index=True, comment="Request 고유 ID")
+    user_query: Mapped[str] = mapped_column(Text)
+    intent: Mapped[str] = mapped_column(String(20))
+    raw_generation: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    is_valid: Mapped[Optional[bool]] = mapped_column(nullable=True, comment="Guardrails 통과 여부")
+    error_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    error_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    diagnostics: Mapped[Optional[Any]] = mapped_column(JSONB, nullable=True, comment="소요 시간, 토큰 사용량 등")
+
+    # 신규: 보안 위반 기록용 컬럼
+    is_security_alert: Mapped[bool] = mapped_column(default=False, server_default="false", comment="보안 위반 여부")
+    hit_patterns: Mapped[Optional[Any]] = mapped_column(JSONB, nullable=True, comment="감지된 공격 패턴 (JSON Array)")
