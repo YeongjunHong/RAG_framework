@@ -14,7 +14,9 @@ from src.rag.core.interfaces import (
     RagPromptMaker,
     RagGenerator,
     RagPostChecker,
+    RagInputGuard, # 추가
 )
+
 
 
 @dataclass(frozen=True)
@@ -48,6 +50,9 @@ class BaseRegistry(Generic[TInterface]):
 
     def keys(self) -> list[str]:
         return sorted(self.items.keys())
+    
+class InputGuardRegistry(BaseRegistry[RagInputGuard]):
+    pass
 
 
 class QueryExpanderRegistry(BaseRegistry[RagQueryExpander]):

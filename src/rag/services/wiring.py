@@ -150,6 +150,11 @@ from src.rag.plugins.slm_planner import CloudSlmPlanner
 from src.rag.plugins.noop import NoopPostChecker # post_check
 from src.rag.plugins.guardrails_runner import CompositeGuardrails
 from src.rag.plugins.router import build_llm
+# 신규 플러그인 임포트
+from src.rag.plugins.input_guard_regex import RegexInputGuard
+
+#DB URL 생성 로직을 활용해서, SQLAlchemy 비동기 세션
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
 def build_planner_registry(**kwargs) -> registry.PlannerRegistry:
     return registry.PlannerRegistry(
@@ -160,6 +165,19 @@ def build_planner_registry(**kwargs) -> registry.PlannerRegistry:
 
 def build_query_expander_registry(**kwargs) -> registry.QueryExpanderRegistry:
     return registry.QueryExpanderRegistry()
+
+def build_input_guard_registry(**kwargs) -> registry.InputGuardRegistry:
+    """보안 검사 레이어 조립"""
+    # 기본적으로 정규식 기반 가드를 사용하도록 설정
+    # 내부적으로 settings/input_guard_rules.json을 로드하도록 설계될 것임
+    default_guard = RegexInputGuard()
+    
+    return registry.InputGuardRegistry(
+        items={
+            "default": default_guard,
+            "regex": default_guard
+        }
+    )
 
 def build_retriever_registry(**kwargs) -> registry.RetrieverRegistry:
     db_url = utils.get_pg_url(cfg.PG1_DATABASE, cfg.PG1_HOST, cfg.PG1_PORT, cfg.PG1_USERNAME, cfg.PG1_PASSWORD)
@@ -221,3 +239,20 @@ def build_postchecker_registry(**kwargs) -> registry.PostCheckerRegistry:
             "noop": NoopPostChecker()
         }
     )
+
+def build_db_session_maker():
+    """DB 비동기 세션 메이커 조립"""
+    db_url = utils.get_pg_url(
+        cfg.PG1_DATABASE, cfg.PG1_HOST, cfg.PG1_PORT, 
+        cfg.PG1_USERNAME, cfg.PG1_PASSWORD
+    )
+    
+    # 비동기 드라이버 처리 (asyncpg 권장, 기존 코드 스타일에 맞춤)
+    async_db_url = db_url.replace("+psycopg", "")
+    if async_db_url.startswith("postgresql://"):
+        async_db_url = async_db_url.replace("postgresql://", "postgresql+asyncpg://")
+        
+    engine = create_async_engine(async_db_url, pool_pre_ping=True)
+    
+    # expire_on_commit=False는 비동기 환경에서 필수
+    return async_sessionmaker(engine, expire_on_commit=False)
