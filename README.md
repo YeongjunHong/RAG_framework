@@ -1,31 +1,40 @@
-# RAG Pipeline (Enterprise Edition)
+# RAG Pipeline 
 
-본 프로젝트는 금융 및 정책 도메인에 특화된 RAG(Retrieval-Augmented Generation) 파이프라인으로, 안정적인 운영과 유연한 확장을 위해 **Interface**, **Stage**, **Service/Plugin**의 3계층 아키텍처로 설계되었습니다.
-
+본 프로젝트는 데이터셋의 도메인에 구애받지 않고 고신뢰성 답변을 생성하기 위한 **범용 RAG(Retrieval-Augmented Generation) 프레임워크**입니다. 
+안정적인 운영과 무한한 확장을 위해 **Interface**, **Stage**, **Service/Plugin**의 3계층 아키텍처로 설계되었습니다.
+***이 레포에서는 실험을 위해 금융 정책 데이터셋을 사용함***
 ---
 
 ## 1. 계층별 역할 및 책임
 
-### interface 계층
+###  Interface 계층 (`src/rag/core/*`)
 외부 의존성을 추상화하기 위한 인터페이스 레이어입니다. 실질적인 기능 구현체가 특정 인프라나 라이브러리에 종속되지 않도록 경계를 형성합니다.
 * 외부 시스템과의 인터페이스 정의 (`src/rag/core/interfaces.py`)
 * PostgreSQL, Local LLM, Cloud Router 등 구현체 교체 가능
 * 테스트 시 Mock 또는 In-memory 구현으로 대체 가능
 
-### stage 계층
+### stage 계층 (`src/rag/stages/*`)
 RAG 파이프라인의 각 단계를 독립적인 책임 단위로 분리한 실행 레이어입니다. 모든 `src/rag/stages/*`은 공통 입출력 명세를 따릅니다.
 * Query Expansion, Retrieval, Reranking 등 단계별 책임 분리
 * LangGraph 노드 단위로 조합 및 분기 가능
 * 파이프라인을 관통하는 `RagContext`를 기반으로 데이터 전달
 
-### 기능(service, plugin) 계층
+### 기능(Service/Plugin) 계층 (`src/rag/plugins/*`)
 실제 로직(DB 쿼리, 벡터 검색, LLM 호출 등)을 수행하는 구현 레이어입니다.
 * PostgreSQL + pgvector 하이브리드 검색 구현
 * SLM Planner, Reranker, LLM-as-a-Judge(Guardrails) 등 실제 기능 포함
 
 ---
 
-## 2. RAG Pipeline Implementation Status
+## 2. 검증 데이터셋 (Reference Dataset)
+프레임워크의 성능과 신뢰성을 테스트하기 위해 아래의 고난도 도메인 데이터를 기본 레퍼런스로 활용하고 있습니다.
+
+*   **금융/정책 통합 데이터셋:** 전문 용어, 복잡한 수치 정보, 상충하는 정책 지침이 포함된 비정형 텍스트 데이터
+*   **특징:** 유사한 키워드가 많아 정교한 Reranking 및 Filtering 능력을 검증하기에 최적화된 데이터셋
+
+---
+
+## 3. RAG Pipeline Implementation Status
 
 | Step | Process Name | Description | Status | 비고 |
 | :--- | :--- | :--- | :---: | :--- |
@@ -45,9 +54,9 @@ RAG 파이프라인의 각 단계를 독립적인 책임 단위로 분리한 실
 
 ## 3. 핵심 아키텍처 특징
 
-* **Hybrid Filtering Logic**: 1등 문서와의 점수 차이(Relative Margin)와 절대 하한선(Floor)을 결합하되, `Min-K` 보장 로직으로 컨텍스트 기아 현상을 방지합니다.
-* **Agentic Routing**: 일상 대화(Chitchat)와 지식 검색 질문을 Planner가 분리하여 리소스 소모를 최적화합니다.
-* **Fail-fast Guardrails**: 주민번호 등 PII 감지 시 즉시 차단하며, LLM Judge를 통해 문서에 근거하지 않은 환각(Hallucination)을 검증합니다.
+* **Domain-Agnostic Design:** 데이터 스키마와 검색 엔진이 분리되어 있어, 어떤 도메인의 텍스트 데이터도 즉시 주입 및 검색이 가능합니다.
+* **Hybrid Filtering Logic:** 절대 하한선과 상대 편차 임계값을 결합하여 '정답이 없는 상황'에서도 환각을 방지하고 최소한의 문맥(`Min-K`)을 확보합니다.
+* **Fail-fast Guardrails:** 생성된 답변이 제공된 문서에 기반하는지(`Groundedness`)를 최종 단계에서 엄격히 검증하여 신뢰성을 담보합니다.
 
 ---
 
