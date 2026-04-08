@@ -25,9 +25,15 @@ class RagPlanner(ABC):
         raise NotImplementedError
 
 
+# class RagQueryExpander(ABC):
+#     @abstractmethod
+#     async def forward(self) -> List[ExpandedQuery]:
+#         raise NotImplementedError
 class RagQueryExpander(ABC):
+    """Query Expansion port for generating multiple queries or extracting keywords."""
     @abstractmethod
-    async def forward(self) -> List[ExpandedQuery]:
+    async def forward(self, query: str) -> List[str]:
+        """원본 쿼리를 입력받아 확장된 쿼리 문자열 리스트(또는 키워드 리스트)를 반환한다."""
         raise NotImplementedError
 
 

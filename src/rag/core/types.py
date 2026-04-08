@@ -330,10 +330,17 @@ class ScoredChunk(BaseModel):
     score: float
     signals: Dict[str, Any] = Field(default_factory=dict)
 
+# class ExpandedQuery(BaseModel):
+#     content: str
+#     intent: Literal["original", "keyword", "semantic"]
+#     channels: set[Literal["bm25", "tsv", "vector"]] = Field(default_factory=set)
+#     weight: float = 1.0
+
 class ExpandedQuery(BaseModel):
     content: str
     intent: Literal["original", "keyword", "semantic"]
-    channels: set[Literal["bm25", "tsv", "vector"]] = Field(default_factory=set)
+    # 변경점: default_factory를 통해 기본적으로 bm25, vector 양쪽 모두를 탐색하도록 세팅
+    channels: set[Literal["bm25", "tsv", "vector"]] = Field(default_factory=lambda: {"bm25", "vector"})
     weight: float = 1.0
 
 class FilteredChunk(BaseModel):
