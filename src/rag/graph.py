@@ -592,11 +592,10 @@ def build_graph():
     tracer = build_tracer()
     llm = build_llm()
 
-    # DB 세션 메이커 조립 (추가)
+    # DB 세션 메이커 조립
     db_session_maker = wiring.build_db_session_maker()
 
     # Registry 조립
-    # 신규: InputGuard 레지스트리 추가
     input_guard_registry = wiring.build_input_guard_registry()
     planner_registry = wiring.build_planner_registry()
     query_expander_registry = wiring.build_query_expander_registry()
@@ -611,11 +610,15 @@ def build_graph():
     postchecker_registry = wiring.build_postchecker_registry()
 
     # Stages 인스턴스화
-    # 1. Input Guard (레지스트리 주입 방식으로 변경)
-    ig = InputGuardStage(registry=input_guard_registry, tracer=tracer,db_session_maker=db_session_maker)
+    # 1. Input Guard
+    ig = InputGuardStage(registry=input_guard_registry, tracer=tracer, db_session_maker=db_session_maker)
 
     pln = PlannerStage(PlannerConfig(), registry=planner_registry, tracer=tracer)
-    qx = QueryExpansionStage(QueryExpansionConfig())
+    
+    # 2. Query Expansion (동적 라우팅 및 DI 적용)
+    qx_config = QueryExpansionConfig(mode="dynamic", max_expansions=4)
+    qx = QueryExpansionStage(config=qx_config, registry=query_expander_registry, tracer=tracer)
+    
     rt = RetrievalStage(RetrievalConfig(), registry=retriever_registry, tracer=tracer)
     rr = RerankingStage(RerankingConfig(), registry=reranker_registry, tracer=tracer)
     flt = FilteringStage(FilteringConfig())
