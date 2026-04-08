@@ -153,6 +153,10 @@ from src.rag.plugins.router import build_llm
 # 신규 플러그인 임포트
 from src.rag.plugins.input_guard_regex import RegexInputGuard
 
+# 신규 플러그인 임포트 (Query Expansion)
+from src.rag.plugins.qe_keyword import KeywordExtractorPlugin
+from src.rag.plugins.qe_multi_query import MultiQueryPlugin
+
 #DB URL 생성 로직을 활용해서, SQLAlchemy 비동기 세션
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
@@ -163,8 +167,18 @@ def build_planner_registry(**kwargs) -> registry.PlannerRegistry:
         }
     )
 
+# def build_query_expander_registry(**kwargs) -> registry.QueryExpanderRegistry:
+#     return registry.QueryExpanderRegistry()
+
 def build_query_expander_registry(**kwargs) -> registry.QueryExpanderRegistry:
-    return registry.QueryExpanderRegistry()
+    """Query Expansion 관련 플러그인들을 조립하여 레지스트리 반환"""
+    return registry.QueryExpanderRegistry(
+        items={
+            "default": MultiQueryPlugin(),  # Fallback을 위한 기본값 설정
+            "keyword_extractor": KeywordExtractorPlugin(),
+            "multi_query": MultiQueryPlugin()
+        }
+    )
 
 def build_input_guard_registry(**kwargs) -> registry.InputGuardRegistry:
     """보안 검사 레이어 조립"""
