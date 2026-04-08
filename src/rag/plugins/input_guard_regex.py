@@ -78,11 +78,22 @@ class RegexInputGuard(RagInputGuard):
             # error 대신 warning을 사용하여 터미널 노출을 막음 (런타임 로깅 설정에 따라 다름)
             # 실제 운영에서는 보안 전용 로거를 분리하는 것이 정석
             logger.warning(f"[INTERNAL_SECURITY] Detection rules triggered.")
+
+            # 기본값은 프롬프트 인젝션으로 설정
+            status = SecurityStatus.INJECTION_ATTEMPT
+            reason = "Unauthorized request pattern detected."
+
+            # 매칭된 패턴 중 PII(주민등록번호, 카드번호 등) 정규식이 있는지 식별
+            for p in hit_patterns:
+                if "\\d{6}" in p or "\\d{4}" in p:
+                    status = SecurityStatus.PII_LEAK
+                    reason = "민감한 개인정보(PII) 노출 의심 패턴 감지."
+                    break
             
             return InputGuardResponse(
                 is_safe=False,
-                status=SecurityStatus.INJECTION_ATTEMPT,
-                reason="Unauthorized request pattern detected.",
+                status=status,
+                reason=reason,
                 hit_patterns=hit_patterns  # DB 기록을 위해 컨텍스트에는 원본 패턴 유지
             )
 

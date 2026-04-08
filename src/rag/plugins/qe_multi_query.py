@@ -1,14 +1,16 @@
 import os
 import json
+import re
 from typing import List
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
 
 from src.common.logger import get_logger
+from src.rag.core.interfaces import RagQueryExpander
 
 logger = get_logger(__name__)
 
-class MultiQueryPlugin:
+class MultiQueryPlugin(RagQueryExpander):
     def __init__(self, model_name: str = "meta-llama/llama-3-8b-instruct"):
         self.api_key = os.getenv("OPENROUTER_API_KEY")
         if not self.api_key:
@@ -20,9 +22,9 @@ class MultiQueryPlugin:
             base_url="https://openrouter.ai/api/v1",
             api_key=self.api_key,
             model=self.model_name,
-            # 키워드 추출(0.0)과 달리, 다양한 각도의 질문을 만들기 위해 온도를 약간 올림
             temperature=0.7,  
-            max_tokens=200,
+            # JSON 텍스트 잘림 방지를 위해 넉넉하게 500으로 설정
+            max_tokens=500,
             model_kwargs={"response_format": {"type": "json_object"}} 
         )
 
@@ -38,17 +40,37 @@ class MultiQueryPlugin:
         3. 원본 질문의 핵심 의도는 무조건 보존해야 합니다.
         4. **생성되는 모든 쿼리는 반드시 '한국어'로만 작성해야 합니다.** (영어 등 타 언어 사용 금지)
         5. 결과는 반드시 "queries" 키를 가진 JSON 배열 포맷으로 응답하세요.
+        6. **절대로 인사말, 설명, 마크다운 기호(```)를 포함하지 마세요. 오직 중괄호 '{{' 로 시작하고 '}}' 로 끝나는 순수 JSON 문자열만 출력해야 합니다.**
 
         [출력 예시]
-        User: 하이브리드 카드의 단점이 뭐야?
-        Assistant: {{"queries": ["하이브리드 카드의 주요 단점과 한계점은 무엇인가요?", "체크카드와 비교했을 때 하이브리드 카드가 가지는 불편한 점", "하이브리드 신용카드 사용 시 주의사항 및 연체 위험성"]}}
+        {{
+            "queries": [
+                "하이브리드 카드의 주요 단점과 한계점은 무엇인가요?", 
+                "체크카드와 비교했을 때 하이브리드 카드가 가지는 불편한 점", 
+                "하이브리드 신용카드 사용 시 주의사항 및 연체 위험성"
+            ]
+        }}
 
         [사용자 질문]: {query}
         """
         
         try:
             res = await self.llm.ainvoke([HumanMessage(content=prompt)])
-            parsed_data = json.loads(res.content)
+            raw_content = res.content.strip()
+            
+            raw_content = re.sub(r'^```(?:json)?\s*', '', raw_content, flags=re.IGNORECASE)
+            raw_content = re.sub(r'\s*```$', '', raw_content)
+            
+            start_idx = raw_content.find('{')
+            end_idx = raw_content.rfind('}')
+            
+            if start_idx != -1 and end_idx != -1 and start_idx < end_idx:
+                raw_content = raw_content[start_idx:end_idx+1]
+            else:
+                logger.warning(f"[MultiQuery] JSON 중괄호를 찾을 수 없습니다. 원본: {raw_content[:100]}")
+                return []
+            
+            parsed_data = json.loads(raw_content)
             queries = parsed_data.get("queries", [])
             
             if not isinstance(queries, list) or not queries:
@@ -58,8 +80,8 @@ class MultiQueryPlugin:
             logger.info(f"[MultiQuery] 다중 쿼리 확장 완료: {queries}")
             return queries
             
-        except json.JSONDecodeError:
-            logger.error("[MultiQuery] JSON 파싱 실패.")
+        except json.JSONDecodeError as e:
+            logger.error(f"[MultiQuery] JSON 파싱 실패. 원본 응답: {res.content[:100]}... | 에러: {e}")
             return []
         except Exception as e:
             logger.error(f"[MultiQuery] LLM 호출 중 에러 발생: {e}")
