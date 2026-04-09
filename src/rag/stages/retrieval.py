@@ -33,7 +33,7 @@ class RetrievalStage(RagStage[RetrievalConfig]):
 
         queries = ctx.expanded_queries or [request.user_query]
 
-        filters = plan.get("filters", {} ) # 플랜에서 필터 꺼내기 jules; 동적 메타데이터 필터링을 위해 Interfaces 파일에 filters 인자 하나 더 추가
+        filters = plan.get("filters", {} ) # 플랜에서 필터 꺼내기 ; 동적 메타데이터 필터링을 위해 Interfaces 파일에 filters 인자 하나 더 추가
 
         with self.tracer.span("retrieve", top_k=self.config.top_k):
             ctx.retrieved = await provider.forward(
