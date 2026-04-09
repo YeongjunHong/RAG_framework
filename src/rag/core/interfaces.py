@@ -67,6 +67,13 @@ class RagCompressor(ABC):
     @abstractmethod
     async def forward(self) -> List[EvidenceGroup]:
         raise NotImplementedError
+    
+# 신규 추가: 텍스트 압축 플러그인 전용 인터페이스
+class RagTextCompressor(ABC):
+    """Plugin port for semantic text compression (e.g., LLMLingua/SLM)."""
+    @abstractmethod
+    async def forward(self, texts: List[str]) -> List[str]:
+        raise NotImplementedError
 
 
 class RagPacker(ABC):

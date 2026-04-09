@@ -603,7 +603,11 @@ def build_graph():
     reranker_registry = wiring.build_reranker_registry()
     filterer_registry = wiring.build_filterer_registry()
     assembler_registry = wiring.build_assembler_registry()
+    
+    # 압축 관련 레지스트리 조립 (Stage용과 Plugin용 분리)
     compressor_registry = wiring.build_compressor_registry()
+    text_compressor_registry = wiring.build_text_compressor_registry() # 추가된 플러그인 레지스트리
+    
     packer_registry = wiring.build_packer_registry()
     promptmaker_registry = wiring.build_promptmaker_registry()
     generator_registry = wiring.build_generator_registry()
@@ -623,7 +627,10 @@ def build_graph():
     rr = RerankingStage(RerankingConfig(), registry=reranker_registry, tracer=tracer)
     flt = FilteringStage(FilteringConfig())
     asm = AssemblyStage(AssemblyConfig())
-    cmp = CompressionStage(CompressionConfig())
+    
+    # 3. CompressionStage에 플러그인 레지스트리 주입
+    cmp = CompressionStage(CompressionConfig(), registry=text_compressor_registry)
+    
     pck = PackingStage(PackingConfig(), tracer=tracer)
     pm = PromptMakerStage(PromptMakerConfig())
     gen = GeneratorStage(GeneratorConfig(), llm=llm, tracer=tracer)
