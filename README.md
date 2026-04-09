@@ -75,41 +75,125 @@ RAG 파이프라인의 각 단계를 독립적인 책임 단위로 분리한 실
 ```text
 RAG_FRAMEWORK/
 ├── .venv/
-├── .vscode/
 ├── pg-ext/
+├── settings/
+│   └── input_guard_rules.json        # Input Guard 정규식 패턴 및 보안 정책 룰셋
 ├── src/
-│   ├── api/
 │   ├── common/
-│   ├── evaluation/
-│   ├── pgdb/
-│   └── rag/
-│       ├── core/                           # 공통 타입 및 인터페이스
-│       │   ├── interfaces.py
-│       │   └── types.py
-│       ├── plugins/                        # 리트리버, 확장기, 가드레일 구현체
-│       │   ├── input_guard_regex.py        # 정규식 기반 보안 가드 플러그인
-│       │   ├── qe_keyword.py               # BM25 타겟 키워드 추출기
-│       │   ├── qe_multi_query.py           # Vector 타겟 다중 쿼리 생성기
-│       │   ├── guardrails_runner.py
-│       │   ├── postgres_retriever.py
-│       │   ├── local_reranker.py
-│       │   ├── slm_planner.py
-│       │   ├── openrouter_generator.py
-│       │   └── ...
-│       ├── services/                       # 의존성 주입 및 레지스트리
-│       │   ├── registry.py
-│       │   └── wiring.py
-│       ├── stages/                         # LangGraph 단계별 노드
-│       │   ├── input_guard.py
-│       │   ├── planner.py
-│       │   ├── query_expansion.py
-│       │   ├── retrieval.py
-│       │   ├── reranking.py
-│       │   ├── filtering.py
-│       │   └── ...
-│       └── graph.py                        # LangGraph 아키텍처 및 라우팅 정의
-│
-├── showcase_history.jsonl                  # 테스트 시나리오 실행 텔레메트리 로그
+│   │   └── logger.py                 # 표준 로깅 포맷 및 핸들러 설정
+│   ├── rag/
+│   │   ├── bulk_source/              
+│   │   │   └── source_chunk_ingestion.py # 데이터셋 다운로드 및 pgvector 청크 적재 스크립트
+│   │   ├── core/
+│   │   │   ├── interfaces.py         # 파이프라인 확장을 위한 추상 기본 클래스 (ABC)
+│   │   │   └── types.py              # Pydantic 기반 도메인 모델 (RagContext, Chunk 등)
+│   │   ├── plugins/                  # 외부 의존성(DB, LLM, Model) 주입 플러그인
+│   │   │   ├── input_guard_regex.py  # 정규식 기반 프론트도어 보안 검사기
+│   │   │   ├── qe_keyword.py         # BM25 타격용 불용어 제거 및 키워드 추출기
+│   │   │   ├── qe_multi_query.py     # Vector 타격용 다중 쿼리 생성기 (의미 확장)
+│   │   │   ├── postgres_retriever.py # 채널 분리(비동기 병렬) 및 App-Level RRF 하이브리드 검색기
+│   │   │   ├── local_reranker.py     # bge-reranker-v2-m3 추론 및 Sigmoid 정규화
+│   │   │   ├── text_compressor.py    # SLM 기반 Semantic Text Compression (의미 압축) 플러그인
+│   │   │   ├── slm_planner.py        # Llama-3-8b 기반 의도 분류 플래너
+│   │   │   ├── guardrails_runner.py  # 답변 안전성 및 할루시네이션 검증 모듈
+│   │   │   ├── openrouter_generator.py # OpenRouter 기반 비동기 스트리밍 답변 생성기
+│   │   │   ├── noop.py               # 파이프라인 우회용 No-operation 더미 객체
+│   │   │   └── router.py             # LLM 인스턴스 빌더 
+│   │   ├── services/
+│   │   │   ├── registry.py           # 플러그인 객체 생명주기를 관리하는 레지스트리 (DI 컨테이너)
+│   │   │   └── wiring.py             # 애플리케이션 구동 시 플러그인 의존성 주입 조립
+│   │   ├── stages/                   # LangGraph의 단일 책임을 가지는 실행 노드(Node)
+│   │   │   ├── input_guard.py        # 프롬프트 인젝션 및 PII 즉시 차단 (Fail-fast)
+│   │   │   ├── planner.py            # SLM을 통한 쿼리 의도 분석 및 라우팅 플래그 제어
+│   │   │   ├── query_expansion.py    # 사용자 쿼리를 의도에 맞춰 다각화 (Keyword/Semantic)
+│   │   │   ├── retrieval.py          # 비동기 병렬 DB 쿼리 및 RRF 결합 초기 문서 풀 확보
+│   │   │   ├── reranking.py          # Cross-Encoder를 활용한 Query-Chunk 문맥 유사도 재평가
+│   │   │   ├── filtering.py          # 정규화된 확률 점수(min_score) 기준 노이즈 하드 드랍
+│   │   │   ├── assembly.py           # 파편화된 청크를 출처(Source) 단위 병합 및 논리적 정렬
+│   │   │   ├── compression.py        # 2-Step 압축 (SLM 의미 압축 후 인코더 기반 Token 삭감)
+│   │   │   ├── packing.py            # 압축된 객체를 XML 마크업 직렬화 및 Escape 처리
+│   │   │   ├── prompt_maker.py       # 의도에 따른 시스템 지시어 스위칭 및 최종 Prompt 조립
+│   │   │   ├── generator.py          # LLM API 호출 및 비동기 Queue 기반 스트리밍 처리
+│   │   │   └── post_check.py         # 판관(Judge) 모델을 통한 Groundedness 사후 검증
+│   │   └── graph.py                  # LangGraph StateMachine 정의 및 조건부 간선(Edge) 라우팅
+├── run_showcase.py                   # 대화형 CLI 데모 및 복합 추론 시나리오 벤치마크 실행
+└── showcase_history.jsonl            # 파이프라인 E2E 실행 로그 및 Telemetry 트레이스 덤프
 ├── main.py                                 # 어플리케이션 엔트리포인트
 ├── requirements.txt                        # 의존성 패키지
 └── README.md
+```
+---
+
+---
+## 6. 파이프라인 
+
+
+```mermaid
+graph TD
+    classDef default fill:#ffffff,stroke:#333,stroke-width:1px,color:#333;
+    classDef router fill:#e1f5fe,stroke:#0288d1,stroke-width:2px,color:#000;
+    classDef retrieval fill:#fff3e0,stroke:#f57c00,stroke-width:1px,color:#000;
+    classDef process fill:#f3e5f5,stroke:#7b1fa2,stroke-width:1px,color:#000;
+    classDef generation fill:#e8f5e9,stroke:#388e3c,stroke-width:2px,color:#000;
+    classDef endpoint fill:#eceff1,stroke:#607d8b,stroke-width:2px,color:#000;
+    classDef guard fill:#ffebee,stroke:#c62828,stroke-width:2px,color:#000;
+
+    Start([User Query]):::endpoint --> InputGuard
+
+    subgraph "Phase 0: Security Gateway"
+        InputGuard{Input Guard<br/>Regex & Policy}:::guard
+    end
+
+    subgraph "Phase 1: Planning & Routing"
+        Planner{Planner<br/>SLM Intent Classifier}:::router
+    end
+
+    subgraph "Phase 2: Parallel Retrieval & Reranking"
+        QueryExpansion[Query Expansion<br/>Keyword & Semantic]:::retrieval
+        
+        RetrievalSplit{Async Dispatch}:::router
+        BM25[(pg_trgm / BM25<br/>Sparse Search)]:::retrieval
+        Vector[(pgvector<br/>Dense Search)]:::retrieval
+        RRF[App-Level RRF<br/>Rank Fusion]:::process
+        
+        Reranking[Reranking<br/>Cross-Encoder]:::retrieval
+        Filtering[Filtering<br/>Threshold Drop]:::retrieval
+    end
+
+    subgraph "Phase 3: Context Engineering"
+        Assembly[Assembly<br/>Source Grouping]:::process
+        Compression[Compression<br/>Step 1: SLM Semantic<br/>Step 2: Token Budget]:::process
+        Packing[Packing<br/>XML Serialization]:::process
+    end
+
+    subgraph "Phase 4: Generation & Safety"
+        PromptMaker[Prompt Maker<br/>Dynamic System Prompt]:::generation
+        Generator[Generator<br/>Async Streaming]:::generation
+        PostCheck[Post Check<br/>LLM Judge Groundedness]:::guard
+    end
+
+    %% Data Flow & Routing
+    InputGuard -- "is_safe: False" --> PromptMaker
+    InputGuard -- "is_safe: True" --> Planner
+
+    Planner -- "chitchat / security" --> PromptMaker
+    Planner -- "search intent" --> QueryExpansion
+
+    QueryExpansion --> RetrievalSplit
+    RetrievalSplit --> BM25
+    RetrievalSplit --> Vector
+    BM25 --> RRF
+    Vector --> RRF
+    
+    RRF --> Reranking
+    Reranking --> Filtering
+    Filtering --> Assembly
+    
+    Assembly --> Compression
+    Compression --> Packing
+    Packing --> PromptMaker
+
+    PromptMaker --> Generator
+    Generator --> PostCheck
+    PostCheck --> End([Final Response]):::endpoin
+  ```
