@@ -8,12 +8,9 @@ from sqlalchemy.exc import OperationalError, ProgrammingError, SQLAlchemyError, 
 
 from src.common.logger import get_logger
 
-
 logger = get_logger(__name__)
 
-
 ParamsType = Union[Dict[str, Any], Sequence[Dict[str, Any]], None]
-
 
 class PGDB:
     """
@@ -29,13 +26,12 @@ class PGDB:
         connect_retries: int = 3,
         query_retries: int = 1,  # 읽기(SELECT)만 재시도
         connect_backoff_base_sec: float = 2.0,
-        # 풀/타임아웃 옵션
         pool_size: int = 5,
         max_overflow: int = 10,
         pool_timeout: int = 30,
         pool_recycle: int = 1800,
         pool_pre_ping: bool = True,
-        statement_timeout_ms: int|None = 10_000,  # Postgres statement_timeout 설정 옵션 (ms)
+        statement_timeout_ms: int|None = 10_000,
     ):
         self.db_url = db_url
         self.connect_retries = connect_retries
@@ -69,7 +65,6 @@ class PGDB:
                     pool_recycle=self.pool_recycle,
                     connect_args=connect_args if connect_args else None,
                 )
-                # 실제 연결 테스트
                 with self.engine.connect() as conn:
                     conn.execute(text("SELECT 1"))
                 logger.info("DB 연결 성공")
@@ -97,7 +92,6 @@ class PGDB:
 
     @staticmethod
     def _row_to_dict(row: Any) -> Dict[str, Any]:
-        # SQLAlchemy 1.4 or 2.x
         return dict(row._mapping)
 
     def _execute_with_retry_readonly(
@@ -106,7 +100,6 @@ class PGDB:
         sql_query: str,
         params: ParamsType = None,
     ) -> sqlalchemy.engine.CursorResult:
-        # SELECT 등 읽기 전용은 제한적으로 재시도
         last_err: BaseException|None = None
         for i in range(self.query_retries + 1):
             try:
@@ -117,7 +110,6 @@ class PGDB:
                 if i < self.query_retries:
                     time.sleep(1.0)
             except ProgrammingError as e:
-                # 문법/스키마 오류는 재시도 의미 없음
                 logger.error("읽기 쿼리 실행 실패(ProgrammingError): %s", e)
                 raise
             except SQLAlchemyError as e:
@@ -129,11 +121,6 @@ class PGDB:
 
     @contextmanager
     def transaction(self) -> Iterator[Connection]:
-        """
-        안전한 트랜잭션 컨텍스트.
-        - 예외 발생 시 자동 롤백
-        - 정상 종료 시 자동 커밋
-        """
         engine = self._require_engine()
         with engine.connect() as conn:
             tx = conn.begin()
@@ -166,11 +153,6 @@ class PGDB:
         *,
         returning: bool = False,
     ) -> Union[int, List[Dict[str, Any]]]:
-        """
-        INSERT/UPDATE/DELETE 실행.
-        - returning=True 이고 쿼리에 RETURNING이 포함되어 있으면 결과 rows를 반환
-        - 그 외에는 row count(int) 반환
-        """
         with self.transaction() as conn:
             try:
                 result = conn.execute(text(sql_query), params)
@@ -182,7 +164,6 @@ class PGDB:
                 logger.exception("Write ProgrammingError")
                 raise
             except DBAPIError as e:
-                # 쓰기 작업은 기본적으로 재시도하지 않음(중복/불일치 방지)
                 logger.exception("Write DBAPIError")
                 raise
             except SQLAlchemyError:
@@ -195,10 +176,10 @@ class PGDB:
         columns: List[str],
         data: List[Tuple],
         page_size: int = 1000,
+        on_conflict: str = "",
     ) -> None:
         """
-        대량의 데이터를 고속으로 INSERT 한다.
-        (요청에 따라 table_name/columns 식별자 검증/보호는 추가하지 않음)
+        대량의 데이터를 고속으로 INSERT 한다. on_conflict 파라미터로 충돌 제어를 추가할 수 있다.
         """
         engine = self._require_engine()
 
@@ -208,7 +189,9 @@ class PGDB:
 
         cols_str = ", ".join(columns)
         placeholders = ", ".join([f":{col}" for col in columns])
-        insert_sql = f"INSERT INTO {table_name} ({cols_str}) VALUES ({placeholders})"
+        
+        # on_conflict 쿼리 결합
+        insert_sql = f"INSERT INTO {table_name} ({cols_str}) VALUES ({placeholders}) {on_conflict}".strip()
 
         param_dicts: List[Dict[str, Any]] = [dict(zip(columns, row_tuple)) for row_tuple in data]
 
@@ -218,8 +201,7 @@ class PGDB:
             with conn.begin():
                 for i in range(0, len(param_dicts), page_size):
                     batch = param_dicts[i : i + page_size]
-                    conn.execute(text(insert_sql), batch)  # executemany
+                    conn.execute(text(insert_sql), batch) 
                     logger.debug("bulk_insert batch 완료: %d~%d", i, min(i + page_size, len(param_dicts)))
 
         logger.info("bulk_insert 완료: table=%s rows=%d", table_name, len(data))
-
