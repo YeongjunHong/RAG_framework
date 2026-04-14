@@ -1,17 +1,17 @@
 import sys
-from pathlib import Path
-
-current_file_path = Path(__file__).resolve()
-project_root = current_file_path.parents[3]
-sys.path.append(str(project_root))
-
 import os
+import hashlib
+from pathlib import Path
+from typing import List, Dict, Any, Set
 from dotenv import load_dotenv
-from typing import List, Dict, Any
 from datasets import load_dataset
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from tqdm import tqdm
+
+current_file_path = Path(__file__).resolve()
+project_root = current_file_path.parents[3]
+sys.path.append(str(project_root))
 
 from src.pgdb.pg_crud import PGDB
 
@@ -34,12 +34,9 @@ DATASET_CONFIGS = [
 
 EMBEDDING_MODEL_NAME = "jhgan/ko-sroberta-multitask"
 
-print(f"임베딩 모델({EMBEDDING_MODEL_NAME}) 로드 중...")
-embeddings = HuggingFaceEmbeddings(
-    model_name=EMBEDDING_MODEL_NAME,
-    model_kwargs={'device': 'mps'}, # mac -> mps ,  
-    encode_kwargs={'normalize_embeddings': True}
-)
+def generate_hash(text: str) -> str:
+    """텍스트의 SHA-256 해시값을 생성합니다."""
+    return hashlib.sha256(text.encode('utf-8')).hexdigest()
 
 def load_raw_data() -> List[Dict[str, Any]]:
     print("데이터셋 다운로드 및 통합 중...")
@@ -57,139 +54,177 @@ def load_raw_data() -> List[Dict[str, Any]]:
                         combined_text.append(f"{col}: {str(item[col])}")
                 
                 if combined_text:
+                    content = "\n".join(combined_text)
                     unified_data.append({
-                        "content": "\n".join(combined_text),
+                        "content": content,
+                        "content_hash": generate_hash(content), 
                         "metadata": {
                             "source_type": source_name,
                             "original_repo": repo_id,
                         }
                     })
         except Exception as e:
-            print(f"{repo_id} 로드 실패: {e}")
+            print(f"[{repo_id}] 로드 실패: {e}")
             
     print(f"총 {len(unified_data)}개의 원본 문서 로드 완료.")
     return unified_data
 
-def clear_existing_data(db: PGDB) -> None:
-    print("\n기존 테이블 데이터 초기화 및 스키마 수정 진행 중...")
-    
-    # 1. 기존 데이터 초기화
-    truncate_sql = """
-        TRUNCATE TABLE source_knowledge, source_chunk, source_chunk_vec, map_source_chunk CASCADE;
+def get_active_hashes_from_db(db: PGDB, subject: str) -> Dict[str, int]:
+    """특정 도메인(subject)의 현재 활성화된 문서 해시와 ID를 가져옵니다."""
+    sql = """
+        SELECT id, content_hash 
+        FROM source_knowledge 
+        WHERE subject = :subject AND is_active = TRUE
     """
-    db.execute_write(truncate_sql)
+    rows = db.fetch_all(sql, {"subject": subject}) 
     
-    # 2. 벡터 컬럼 차원 수를 768로 강제 변경
-    try:
-        alter_sql = """
-            ALTER TABLE source_chunk_vec ALTER COLUMN chunk_vec TYPE vector(768);
-        """
-        db.execute_write(alter_sql)
-        print("벡터 차원 수(768) 스키마 수정 완료.")
-    except Exception as e:
-        print(f"스키마 수정 중 알림 (이미 768이거나 다른 이유): {e}")
+    if not rows:
+        return {}
+    return {row["content_hash"]: row["id"] for row in rows if row["content_hash"]}
 
-    print("기존 데이터 초기화 완료.")
+def process_soft_delete(db: PGDB, source_ids_to_delete: List[int]) -> None:
+    """더 이상 유효하지 않은 원본 문서와 연결된 청크들을 Soft Delete 처리합니다."""
+    if not source_ids_to_delete:
+        return
+
+    print(f"{len(source_ids_to_delete)}개의 구버전/삭제 문서 Soft Delete 진행 중...")
+    
+    sql_disable_knowledge = """
+        UPDATE source_knowledge 
+        SET is_active = FALSE 
+        WHERE id = ANY(:ids)
+    """
+    sql_disable_chunks = """
+        UPDATE source_chunk 
+        SET is_active = FALSE 
+        FROM map_source_chunk msc
+        WHERE source_chunk.id = msc.chunk_id
+          AND msc.source_id = ANY(:ids)
+    """
+    
+    db.execute_write(sql_disable_knowledge, {"ids": source_ids_to_delete})
+    db.execute_write(sql_disable_chunks, {"ids": source_ids_to_delete})
+
 
 def run_ingestion_pipeline() -> None:
-    print("=== RAG_FRAMEWORK 통합 데이터 주입 시작 ===")
+    print("=== [Zero-Downtime] 증분 업데이트 기반 데이터 주입 시작 ===")
     
     try:
         db = PGDB(db_url=DATABASE_URL)
     except Exception as e:
-        print(f"DB 연결 실패. 설정을 확인하세요: {e}")
+        print(f"DB 연결 실패: {e}")
         return
-
-    clear_existing_data(db)
 
     raw_data = load_raw_data()
     if not raw_data:
         print("적재할 데이터가 없습니다.")
         return
 
+    data_by_subject = {}
+    for doc in raw_data:
+        subj = doc["metadata"]["source_type"]
+        if subj not in data_by_subject:
+            data_by_subject[subj] = []
+        data_by_subject[subj].append(doc)
+
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=350,
-        chunk_overlap=50,
-        separators=["\n\n", "\n", ".", "?", "!", " ", ""]
+        chunk_size=350, chunk_overlap=50, separators=["\n\n", "\n", ".", "?", "!", " ", ""]
     )
 
-    print("\nDB 적재 및 텍스트 청킹 진행 중...")
-    
-    # 중복 임베딩을 방지하기 위한 set
-    seen_chunk_ids = set()
     all_chunks_for_embedding = []
-
-    for doc in tqdm(raw_data, desc="Processing Documents"):
-        # A. 원본 데이터 적재
-        sql_insert_raw = """
-            INSERT INTO source_knowledge (content, process, subject) 
-            VALUES (:content, :process, :subject) 
-            RETURNING id
-        """
-        raw_res = db.execute_write(
-            sql_insert_raw, 
-            {
-                "content": doc["content"], 
-                "process": "ingested", 
-                "subject": doc["metadata"]["source_type"]
-            }, 
-            returning=True
-        )
-        source_id = raw_res[0]["id"]
-
-        # B. 청킹 수행
-        chunks = text_splitter.split_text(doc["content"])
+    # 청크 중복 1차 방어 (파이썬 레벨)
+    seen_chunk_ids = set()
+    
+    for subject, docs in data_by_subject.items():
+        print(f"\n--- Domain: {subject} 분석 중 ---")
+        new_hashes_map = {doc["content_hash"]: doc for doc in docs}
+        new_hashes_set = set(new_hashes_map.keys())
         
-        for index, chunk_text in enumerate(chunks):
-            # C. 청크 데이터 적재 (UPSERT 처리)
-            # 이미 존재하는 해시값이면 에러를 내지 않고 content를 덮어쓰며 기존 id를 반환합니다.
-            sql_insert_chunk = """
-                INSERT INTO source_chunk (content, chunk_index, chunk_version) 
-                VALUES (:content, :chunk_index, :chunk_version) 
-                ON CONFLICT ON CONSTRAINT uq_source_chunk_content_hash_chunk_index_chunk_version
-                DO UPDATE SET content = EXCLUDED.content
+        existing_hashes_map = get_active_hashes_from_db(db, subject)
+        existing_hashes_set = set(existing_hashes_map.keys())
+        
+        hashes_to_insert = new_hashes_set - existing_hashes_set
+        hashes_to_delete = existing_hashes_set - new_hashes_set
+        hashes_unchanged = new_hashes_set & existing_hashes_set
+
+        print(f" * 유지됨 (변경없음): {len(hashes_unchanged)} 건 (임베딩 스킵)")
+        print(f" * 신규/수정됨 (Insert): {len(hashes_to_insert)} 건")
+        print(f" * 삭제/만료됨 (Soft Delete): {len(hashes_to_delete)} 건")
+
+        if hashes_to_delete:
+            ids_to_delete = [existing_hashes_map[h] for h in hashes_to_delete]
+            process_soft_delete(db, ids_to_delete)
+
+        for h in tqdm(hashes_to_insert, desc=f"Ingesting New/Updated for {subject}"):
+            doc = new_hashes_map[h]
+            
+            sql_insert_raw = """
+                INSERT INTO source_knowledge (content, process, subject, content_hash, is_active) 
+                VALUES (:content, :process, :subject, :content_hash, TRUE) 
                 RETURNING id
             """
-            chunk_res = db.execute_write(
-                sql_insert_chunk,
+            raw_res = db.execute_write(
+                sql_insert_raw, 
                 {
-                    "content": chunk_text,
-                    "chunk_index": index,
-                    "chunk_version": "v1"
-                },
+                    "content": doc["content"], 
+                    "process": "ingested", 
+                    "subject": subject,
+                    "content_hash": h
+                }, 
                 returning=True
             )
-            chunk_id = chunk_res[0]["id"]
+            source_id = raw_res[0]["id"]
 
-            # D. 매핑 테이블 적재 (중복 매핑 무시)
-            sql_insert_map = """
-                INSERT INTO map_source_chunk (chunk_id, source_id, source_name) 
-                VALUES (:chunk_id, :source_id, :source_name)
-                ON CONFLICT ON CONSTRAINT uq_map_source_chunk_chunk_id_source_id_source_name
-                DO NOTHING
-            """
-            db.execute_write(
-                sql_insert_map,
-                {
-                    "chunk_id": chunk_id,
-                    "source_id": source_id,
-                    "source_name": "knowledge"
-                }
-            )
+            chunks = text_splitter.split_text(doc["content"])
+            for index, chunk_text in enumerate(chunks):
+                # 청크 중복 2차 방어 (DB 레벨 UPSERT)
+                sql_insert_chunk = """
+                    INSERT INTO source_chunk (content, chunk_index, chunk_version, is_active) 
+                    VALUES (:content, :chunk_index, :chunk_version, TRUE) 
+                    ON CONFLICT ON CONSTRAINT uq_source_chunk_content_hash_chunk_index_chunk_version
+                    DO UPDATE SET is_active = TRUE
+                    RETURNING id
+                """
+                chunk_res = db.execute_write(
+                    sql_insert_chunk,
+                    {"content": chunk_text, "chunk_index": index, "chunk_version": "v1"},
+                    returning=True
+                )
+                chunk_id = chunk_res[0]["id"]
 
-            # E. 새로 생성된(또는 아직 벡터가 안 만들어진) 청크만 임베딩 리스트에 추가
-            if chunk_id not in seen_chunk_ids:
-                seen_chunk_ids.add(chunk_id)
-                all_chunks_for_embedding.append({
-                    "chunk_id": chunk_id,
-                    "content": chunk_text
-                })
+                sql_insert_map = """
+                    INSERT INTO map_source_chunk (chunk_id, source_id, source_name) 
+                    VALUES (:chunk_id, :source_id, :source_name)
+                    ON CONFLICT DO NOTHING
+                """
+                db.execute_write(
+                    sql_insert_map,
+                    {"chunk_id": chunk_id, "source_id": source_id, "source_name": "knowledge"}
+                )
 
-    print(f"\n총 {len(all_chunks_for_embedding)}개의 고유 청크가 필터링되어 임베딩 대기열에 들어갔습니다.")
+                # 임베딩 대기열 중복 삽입 방지
+                if chunk_id not in seen_chunk_ids:
+                    seen_chunk_ids.add(chunk_id)
+                    all_chunks_for_embedding.append({
+                        "chunk_id": chunk_id,
+                        "content": chunk_text
+                    })
 
-    print("로컬 임베딩 변환 중...")
-    texts_to_embed = [c["content"] for c in all_chunks_for_embedding]
+    if not all_chunks_for_embedding:
+        print("\n새로 임베딩할 청크가 없습니다. 파이프라인을 종료합니다.")
+        db.close()
+        return
+
+    print(f"\n총 {len(all_chunks_for_embedding)}개의 신규 고유 청크 임베딩 변환 시작...")
     
+    print(f"임베딩 모델({EMBEDDING_MODEL_NAME}) 로드 중...")
+    embeddings = HuggingFaceEmbeddings(
+        model_name=EMBEDDING_MODEL_NAME,
+        model_kwargs={'device': 'mps'}, 
+        encode_kwargs={'normalize_embeddings': True}
+    )
+    
+    texts_to_embed = [c["content"] for c in all_chunks_for_embedding]
     batch_size = 100
     all_vectors = []
     
@@ -198,7 +233,7 @@ def run_ingestion_pipeline() -> None:
         batch_vectors = embeddings.embed_documents(batch_texts)
         all_vectors.extend(batch_vectors)
 
-    print("생성된 벡터를 DB에 대량 적재(Bulk Insert) 합니다...")
+    print("생성된 벡터 DB Bulk Insert 중...")
     vec_insert_data = []
     for chunk_meta, vector in zip(all_chunks_for_embedding, all_vectors):
         vec_insert_data.append((
@@ -207,14 +242,16 @@ def run_ingestion_pipeline() -> None:
             EMBEDDING_MODEL_NAME
         ))
 
+    # 벡터 중복 3차 방어 (DB 레벨 IGNORE)
     db.bulk_insert(
         table_name="source_chunk_vec",
         columns=["chunk_id", "chunk_vec", "vec_model_name"],
         data=vec_insert_data,
-        page_size=1000
+        page_size=1000,
+        on_conflict="ON CONFLICT ON CONSTRAINT uq_source_chunk_vec_chunk_id_vec_model_name DO NOTHING"
     )
 
-    print("\n데이터 주입 파이프라인 완주 성공! 중복 제거 및 모든 테이블 적재가 완료되었습니다.")
+    print("\n데이터 주입 파이프라인 완주 성공! Zero-Downtime 업데이트가 완료되었습니다.")
     db.close()
 
 if __name__ == "__main__":
