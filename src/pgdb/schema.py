@@ -1,7 +1,7 @@
 from datetime import datetime
 import enum
 from typing import Any, Optional
-from sqlalchemy import Float, BigInteger, Integer, SmallInteger, Text, String, DateTime, Enum, ForeignKey, UniqueConstraint, Index, Computed, and_, func
+from sqlalchemy import Float, BigInteger, Integer, SmallInteger, Text, String, DateTime, Enum, ForeignKey, UniqueConstraint, Index, Computed, and_, func, Boolean, text
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import DeclarativeBase, Mapped, declared_attr, mapped_column, relationship, foreign
 from pgvector.sqlalchemy import Vector
@@ -39,6 +39,9 @@ class SourceChunk(TableBase):
     chunk_tsv: Mapped[Any] = mapped_column(TSVECTOR, Computed("to_tsvector('simple', coalesce(content,''))", persisted=True), comment="auto-generated tsvector")
     chunk_index: Mapped[int] = mapped_column(Integer, default=0)
     chunk_version: Mapped[str] = mapped_column(String(20))
+    
+    # 신규: 증분 업데이트 시 구버전 문서를 검색에서 제외하기 위한 Soft Delete 플래그
+    is_active: Mapped[bool] = mapped_column(Boolean, server_default=text("true"), default=True, index=True, comment="활성 상태 플래그")
 
     __table_args__ = (
         set_unique_constraint(__tablename__, ["content_hash", "chunk_index", "chunk_version"]),
@@ -50,7 +53,6 @@ class SourceChunkVec(TableBase):
     __tablename__ = "source_chunk_vec"
 
     chunk_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("source_chunk.id", ondelete="CASCADE"))
-    # chunk_vec: Mapped[Any] = mapped_column(Vector(1536))
     chunk_vec: Mapped[Any] = mapped_column(Vector(768))
     vec_model_name: Mapped[str] = mapped_column(String(50))
 
@@ -138,7 +140,11 @@ class SourceKnowledge(SourceTableBase):
     # opt
     category: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-# 공격 패턴을 db에 저장하고 
+    # 신규: 증분 업데이트 판별을 위한 원본 텍스트 해시 및 활성 상태 플래그
+    content_hash: Mapped[Optional[str]] = mapped_column(String(64), index=True, nullable=True, comment="원본 텍스트 sha256 해시")
+    is_active: Mapped[bool] = mapped_column(Boolean, server_default=text("true"), default=True, comment="활성 상태 플래그")
+
+
 class RagExecutionLog(TableBase):
     __tablename__ = "rag_execution_log"
 
@@ -151,6 +157,5 @@ class RagExecutionLog(TableBase):
     error_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     diagnostics: Mapped[Optional[Any]] = mapped_column(JSONB, nullable=True, comment="소요 시간, 토큰 사용량 등")
 
-    # 신규: 보안 위반 기록용 컬럼
     is_security_alert: Mapped[bool] = mapped_column(default=False, server_default="false", comment="보안 위반 여부")
     hit_patterns: Mapped[Optional[Any]] = mapped_column(JSONB, nullable=True, comment="감지된 공격 패턴 (JSON Array)")
