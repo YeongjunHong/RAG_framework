@@ -373,6 +373,8 @@ class PostgresHybridRetriever(RagRetriever):
                 JOIN map_source_chunk msc ON sc.id = msc.chunk_id
                 JOIN source_knowledge sk ON msc.source_id = sk.id
                 WHERE sc.chunk_tsv @@ to_tsquery('simple', $1)
+                  AND sc.is_active = TRUE   -- 추가됨: 활성화된 청크만
+                  AND sk.is_active = TRUE   -- 추가됨: 활성화된 원본 문서만
                 {extra_where}
                 ORDER BY ts_rank_cd(sc.chunk_tsv, to_tsquery('simple', $1)) DESC
                 LIMIT $2;
@@ -395,7 +397,8 @@ class PostgresHybridRetriever(RagRetriever):
                 JOIN source_chunk_vec scv ON sc.id = scv.chunk_id
                 JOIN map_source_chunk msc ON sc.id = msc.chunk_id
                 JOIN source_knowledge sk ON msc.source_id = sk.id
-                WHERE 1=1
+                WHERE sc.is_active = TRUE   -- 1=1 대신 활성화 조건 추가
+                  AND sk.is_active = TRUE   -- 활성화된 원본 문서만
                 {extra_where}
                 ORDER BY scv.chunk_vec <=> $1::vector(768)
                 LIMIT $2;
