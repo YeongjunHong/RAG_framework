@@ -558,7 +558,7 @@
 #     return to_response(out)["response"]
 
 
-from typing import TypedDict
+from typing import TypedDict, Callable
 from langgraph.graph import StateGraph, END
 
 from .core.types import SourceChunk, RagRequest, RagResponse, RagContext
@@ -587,15 +587,11 @@ class GraphState(TypedDict):
     ctx: RagContext
 
 def build_graph():
-    from langgraph.graph import StateGraph, END
-
     tracer = build_tracer()
     llm = build_llm()
 
-    # DB 세션 메이커 조립
+    # DB 및 Registry 조립 (기존과 동일)
     db_session_maker = wiring.build_db_session_maker()
-
-    # Registry 조립
     input_guard_registry = wiring.build_input_guard_registry()
     planner_registry = wiring.build_planner_registry()
     query_expander_registry = wiring.build_query_expander_registry()
@@ -603,107 +599,85 @@ def build_graph():
     reranker_registry = wiring.build_reranker_registry()
     filterer_registry = wiring.build_filterer_registry()
     assembler_registry = wiring.build_assembler_registry()
-    
-    # 압축 관련 레지스트리 조립 (Stage용과 Plugin용 분리)
     compressor_registry = wiring.build_compressor_registry()
-    text_compressor_registry = wiring.build_text_compressor_registry() # 추가된 플러그인 레지스트리
-    
+    text_compressor_registry = wiring.build_text_compressor_registry() 
     packer_registry = wiring.build_packer_registry()
     promptmaker_registry = wiring.build_promptmaker_registry()
     generator_registry = wiring.build_generator_registry()
     postchecker_registry = wiring.build_postchecker_registry()
 
-    # Stages 인스턴스화
-    # 1. Input Guard
+    # Stages 인스턴스화 (기존과 동일)
     ig = InputGuardStage(registry=input_guard_registry, tracer=tracer, db_session_maker=db_session_maker)
-
     pln = PlannerStage(PlannerConfig(), registry=planner_registry, tracer=tracer)
-    
-    # 2. Query Expansion (동적 라우팅 및 DI 적용)
-    qx_config = QueryExpansionConfig(mode="dynamic", max_expansions=4)
-    qx = QueryExpansionStage(config=qx_config, registry=query_expander_registry, tracer=tracer)
-    
+    qx = QueryExpansionStage(config=QueryExpansionConfig(mode="dynamic", max_expansions=4), registry=query_expander_registry, tracer=tracer)
     rt = RetrievalStage(RetrievalConfig(), registry=retriever_registry, tracer=tracer)
     rr = RerankingStage(RerankingConfig(), registry=reranker_registry, tracer=tracer)
     flt = FilteringStage(FilteringConfig())
     asm = AssemblyStage(AssemblyConfig())
-    
-    # 3. CompressionStage에 플러그인 레지스트리 주입
     cmp = CompressionStage(CompressionConfig(), registry=text_compressor_registry)
-    
     pck = PackingStage(PackingConfig(), tracer=tracer)
     pm = PromptMakerStage(PromptMakerConfig())
     gen = GeneratorStage(GeneratorConfig(), llm=llm, tracer=tracer)
-    pc = PostCheckStage(
-        PostCheckConfig(), 
-        guardrails_plugin=postchecker_registry.get("default"), 
-        tracer=tracer
-    )
+    pc = PostCheckStage(PostCheckConfig(), guardrails_plugin=postchecker_registry.get("default"), tracer=tracer)
 
-    # --- Node 래퍼 함수들 ---
-    async def node_input_guard(state: GraphState) -> GraphState:
-        req, ctx = state["request"], state["ctx"]
-        await ig(req, ctx)
-        return state
+    # --- Circuit Breaker Pattern: Safe Node Wrapper ---
+    # 각 스테이지의 실행을 감싸서 예외를 포착하고 상태 객체에 에러를 기록하는 데코레이터 팩토리
+    def make_safe_node(node_name: str, stage_callable: Callable) -> Callable:
+        async def safe_node_func(state: GraphState) -> GraphState:
+            req, ctx = state["request"], state["ctx"]
+            
+            # 이미 이전 노드에서 에러가 발생했다면 실행을 건너뜀 (Fail-Fast)
+            if ctx.errors:
+                return state
+                
+            try:
+                # ==========================================
+                # [장애 주입 테스트] retrieval 노드 도달 시 강제 에러 발생
+                # if node_name == "retrieval":
+                #     raise ConnectionError("테스트용 강제 DB 타임아웃 발생!")
+                # ==========================================
+                await stage_callable(req, ctx)
+            except Exception as e:
+                logger.error(f"[{node_name}] 파이프라인 치명적 예외 발생: {str(e)}", exc_info=True)
+                # 에러 트레이스를 ctx에 기록하여 라우터가 Fallback 경로를 타도록 유도
+                ctx.errors.append({
+                    "node": node_name, 
+                    "error": str(e), 
+                    "type": type(e).__name__
+                })
+            return state
+        return safe_node_func
 
-    async def node_planner(state: GraphState) -> GraphState:
-        req, ctx = state["request"], state["ctx"]
-        await pln(req, ctx)
-        return state
+    # --- Node 래퍼 할당 (보일러플레이트 제거 및 안전성 확보) ---
+    node_input_guard = make_safe_node("input_guard", ig)
+    node_planner = make_safe_node("planner", pln)
+    node_query_expansion = make_safe_node("query_expansion", qx)
+    node_retrieval = make_safe_node("retrieval", rt)
+    node_reranking = make_safe_node("reranking", rr)
+    node_filtering = make_safe_node("filtering", flt)
+    node_assembly = make_safe_node("assembly", asm)
+    node_compression = make_safe_node("compression", cmp)
+    node_packing = make_safe_node("packing", pck)
+    node_prompt_maker = make_safe_node("prompt_maker", pm)
+    node_generator = make_safe_node("generator", gen)
+    node_post_check = make_safe_node("post_check", pc)
 
-    async def node_query_expansion(state: GraphState) -> GraphState:
-        req, ctx = state["request"], state["ctx"]
-        await qx(req, ctx)
-        return state
-
-    async def node_retrieval(state: GraphState) -> GraphState:
-        req, ctx = state["request"], state["ctx"]
-        await rt(req, ctx)
-        return state
-
-    async def node_reranking(state: GraphState) -> GraphState:
-        req, ctx = state["request"], state["ctx"]
-        await rr(req, ctx)
-        return state
-
-    async def node_filtering(state: GraphState) -> GraphState:
-        req, ctx = state["request"], state["ctx"]
-        await flt(req, ctx)
-        return state
-
-    async def node_assembly(state: GraphState) -> GraphState:
-        req, ctx = state["request"], state["ctx"]
-        await asm(req, ctx)
-        return state
-
-    async def node_compression(state: GraphState) -> GraphState:
-        req, ctx = state["request"], state["ctx"]
-        await cmp(req, ctx)
-        return state
-
-    async def node_packing(state: GraphState) -> GraphState:
-        req, ctx = state["request"], state["ctx"]
-        await pck(req, ctx)
-        return state
-
-    async def node_prompt_maker(state: GraphState) -> GraphState:
-        req, ctx = state["request"], state["ctx"]
-        await pm(req, ctx)
-        return state
-
-    async def node_generator(state: GraphState) -> GraphState:
-        req, ctx = state["request"], state["ctx"]
-        await gen(req, ctx)
-        return state
-
-    async def node_post_check(state: GraphState) -> GraphState:
-        req, ctx = state["request"], state["ctx"]
-        await pc(req, ctx)
+    # --- Global Fallback Node ---
+    # 파이프라인 어느 곳에서든 에러가 발생하면 최종적으로 도달하여 안전한 응답을 조립하는 노드
+    async def node_error_handler(state: GraphState) -> GraphState:
+        ctx = state["ctx"]
+        logger.warning(f"[ErrorHandler] {len(ctx.errors)}개의 에러 감지. Fallback 응답을 생성합니다.")
+        last_error_node = ctx.errors[-1]["node"] if ctx.errors else "unknown"
+        
+        # 엔터프라이즈 환경에서는 내부 에러를 노출하지 않고 정제된 메시지 반환
+        ctx.raw_generation = "현재 시스템 내부 트래픽 지연 또는 통신 장애가 발생하여 답변을 생성할 수 없습니다. 잠시 후 다시 시도해 주세요."
+        ctx.postcheck = {"is_valid": False, "reason": f"System Fallback triggered by {last_error_node}"}
         return state
 
     # --- 라우팅 (Conditional Edge) 로직 ---
     def route_after_input_guard(state: GraphState) -> str:
         ctx = state["ctx"]
+        if ctx.errors: return "error_handler"
         if not ctx.input_guard.is_safe:
             logger.warning(f"[Router] InputGuard 보안 위반 감지 -> Prompt Maker로 우회")
             return "prompt_maker"
@@ -711,20 +685,29 @@ def build_graph():
 
     def route_after_planner(state: GraphState) -> str:
         ctx = state["ctx"]
+        if ctx.errors: return "error_handler"
         if ctx.intent == "security_violation" or getattr(ctx, "skip_retrieval", False):
             logger.info(f"[Router] {ctx.intent} 의도 감지 -> Prompt Maker 직행")
             return "prompt_maker"
-            
         logger.info("[Router] 검색 파이프라인 진입 -> Query Expansion")
         return "query_expansion"
 
     def route_after_retrieval(state: GraphState) -> str:
         ctx = state["ctx"]
+        if ctx.errors: return "error_handler"
         if getattr(ctx, "skip_reranker", False):
             logger.info("[Router] Reranker 스킵 -> Assembly 직행")
             return "assembly"
         logger.info("[Router] Reranker 파이프라인 진입")
         return "reranking"
+
+    # 일반적인 선형 엣지에서도 에러 발생 여부를 체크하는 범용 라우터 생성기
+    def check_error_and_route(next_node: str):
+        def router(state: GraphState) -> str:
+            if state["ctx"].errors:
+                return "error_handler"
+            return next_node
+        return router
 
     # --- LangGraph 조립 ---
     g = StateGraph(GraphState)
@@ -742,36 +725,44 @@ def build_graph():
     g.add_node("prompt_maker", node_prompt_maker)
     g.add_node("generator", node_generator)
     g.add_node("post_check", node_post_check)
+    g.add_node("error_handler", node_error_handler) # 에러 핸들러 추가
 
-    # 2. 시작점 설정 (Entry Point)
     g.set_entry_point("input_guard")
     
-    # 3. 조건부 엣지
+    # 3. 브랜치 라우팅 엣지
     g.add_conditional_edges("input_guard", route_after_input_guard, {
         "planner": "planner",
-        "prompt_maker": "prompt_maker"
+        "prompt_maker": "prompt_maker",
+        "error_handler": "error_handler"
     })
 
     g.add_conditional_edges("planner", route_after_planner, {
         "query_expansion": "query_expansion", 
-        "prompt_maker": "prompt_maker",        
+        "prompt_maker": "prompt_maker",   
+        "error_handler": "error_handler"     
     })
 
     g.add_conditional_edges("retrieval", route_after_retrieval, {
         "reranking": "reranking",
         "assembly": "assembly", 
+        "error_handler": "error_handler"
     })
 
-    # 4. 선형 파이프라인 엣지
-    g.add_edge("query_expansion", "retrieval")
-    g.add_edge("reranking", "filtering")
-    g.add_edge("filtering", "assembly")
-    g.add_edge("assembly", "compression")
-    g.add_edge("compression", "packing")
-    g.add_edge("packing", "prompt_maker")
-    g.add_edge("prompt_maker", "generator")
-    g.add_edge("generator", "post_check")
-    g.add_edge("post_check", END)
+    # 4. 단일 흐름 엣지에 Circuit Breaker 적용
+    g.add_conditional_edges("query_expansion", check_error_and_route("retrieval"))
+    g.add_conditional_edges("reranking", check_error_and_route("filtering"))
+    g.add_conditional_edges("filtering", check_error_and_route("assembly"))
+    g.add_conditional_edges("assembly", check_error_and_route("compression"))
+    g.add_conditional_edges("compression", check_error_and_route("packing"))
+    g.add_conditional_edges("packing", check_error_and_route("prompt_maker"))
+    g.add_conditional_edges("prompt_maker", check_error_and_route("generator"))
+    g.add_conditional_edges("generator", check_error_and_route("post_check"))
+    
+    # post_check 이후에도 에러가 났을 수 있으므로 체크 후 END
+    g.add_conditional_edges("post_check", check_error_and_route(END))
+
+    # 에러 핸들러 처리 완료 후 그래프 종료
+    g.add_edge("error_handler", END)
 
     return g.compile()
 
