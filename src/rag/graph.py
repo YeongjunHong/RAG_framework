@@ -767,6 +767,39 @@ def build_graph():
     return g.compile()
 
 async def run_graph(app, request: RagRequest) -> RagResponse:
+    import os
+    from langfuse.langchain import CallbackHandler
+
+    # 1. 시스템 환경변수가 아니라, os.getenv로 확실하게 값을 끌어와서 명시적으로 주입 (타이밍 이슈 차단)
+    lf_public = os.getenv("LANGFUSE_PUBLIC_KEY")
+    lf_secret = os.getenv("LANGFUSE_SECRET_KEY")
+    lf_host = os.getenv("LANGFUSE_BASE_URL")
+
+    # 무조건 콘솔에 찍히도록 print 사용
+    print(f"\n[*] Langfuse 연결 시도... (Host: {lf_host})")
+
+    # 콜백 핸들러에 키값을 직접 박아넣음
+    langfuse_cb = CallbackHandler(
+        public_key=lf_public,
+        secret_key=lf_secret,
+        host=lf_host
+    )
+
+    # 2. 확실한 인증 테스트
+    if langfuse_cb.auth_check():
+        print(" [Langfuse] 서버 연결 및 인증 성공! (트레이스 기록 시작)")
+    else:
+        print(" [Langfuse] 인증 실패! 키값이나 네트워크 상태를 확인하세요.")
+
     state: GraphState = {"request": request, "ctx": RagContext()}
-    out = await app.ainvoke(state)
+    
+    # 3. 그래프 실행
+    out = await app.ainvoke(
+        state, 
+        config={"callbacks": [langfuse_cb]}
+    )
+    
+    # 4. 메모리에 남은 로그를 서버로 완벽하게 밀어내기
+    langfuse_cb.flush()
+
     return to_response(out)["response"]
