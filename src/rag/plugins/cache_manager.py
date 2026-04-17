@@ -25,7 +25,7 @@ class SemanticCacheManager:
         self._setup_index()
 
     def _setup_index(self):
-        """Redis에 벡터 검색을 위한 인덱스 스키마가 없으면 생성합니다."""
+        """Redis에 벡터 검색을 위한 인덱스 스키마가 없으면 생성"""
         try:
             self.redis_client.ft(self.index_name).info()
             logger.info(f"[Cache] Redis 인덱스({self.index_name}) 연동 완료.")
@@ -51,7 +51,7 @@ class SemanticCacheManager:
 
     def check_cache(self, query: str, threshold: float = 0.90) -> str | None:
         """
-        질문 벡터와 캐시된 벡터들을 비교하여 threshold 이상일 경우 답변을 반환합니다.
+        질문 벡터와 캐시된 벡터들을 비교하여 threshold 이상일 경우 답변을 반환
         """
         # 쿼리를 32비트 Float 바이너리 형태로 변환 (Redis 권장 규격)
         query_vector = self.embedder.encode(query).astype(np.float32).tobytes()
@@ -83,7 +83,7 @@ class SemanticCacheManager:
 
     def save_cache(self, query: str, response: str, ttl_seconds: int = 86400):
         """
-        새로운 질문과 생성된 답변을 벡터와 함께 캐시에 저장합니다.
+        새로운 질문과 생성된 답변을 벡터와 함께 캐시에 저장
         """
         query_vector = self.embedder.encode(query).astype(np.float32).tobytes()
         cache_key = f"cache:{hash(query)}"
@@ -98,3 +98,13 @@ class SemanticCacheManager:
         # TTL(만료 시간) 설정 - 기본 24시간
         self.redis_client.expire(cache_key, ttl_seconds)
         logger.debug(f"[Cache SAVED] 결과 저장 완료 (Key: {cache_key})")
+
+    def clear_cache(self):
+        """Redis에 저장된 캐시 인덱스와 데이터를 모두 초기화"""
+        try:
+            # 현재 Redis 데이터베이스의 모든 데이터를 물리적으로 완벽히 삭제 (가장 확실한 방법)
+            self.redis_client.flushdb()
+            logger.info("[Cache] 캐시 저장소가 완벽하게 초기화(Flush) 되었습니다.")
+            self._setup_index() # 인덱스 껍데기 다시 생성
+        except Exception as e:
+            logger.error(f"[Cache] 초기화 실패: {e}")
