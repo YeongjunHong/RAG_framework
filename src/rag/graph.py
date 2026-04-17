@@ -596,16 +596,15 @@ def build_graph():
     db_session_maker = wiring.build_db_session_maker()
     input_guard_registry = wiring.build_input_guard_registry()
     
-    # [Cache] 시맨틱 캐시 매니저 초기화 (로컬 Redis 컨테이너 연동)
+    # [Cache] 시맨틱 캐시 매니저 초기화
     cache_manager = SemanticCacheManager(host="localhost", port=6379)
     
     planner_registry = wiring.build_planner_registry()
     query_expander_registry = wiring.build_query_expander_registry()
     retriever_registry = wiring.build_retriever_registry()
     reranker_registry = wiring.build_reranker_registry()
-    filterer_registry = wiring.build_filterer_registry()
+    filter_registry = wiring.build_filterer_registry()
     assembler_registry = wiring.build_assembler_registry()
-    compressor_registry = wiring.build_compressor_registry()
     text_compressor_registry = wiring.build_text_compressor_registry() 
     packer_registry = wiring.build_packer_registry()
     promptmaker_registry = wiring.build_promptmaker_registry()
@@ -630,23 +629,15 @@ def build_graph():
     def make_safe_node(node_name: str, stage_callable: Callable) -> Callable:
         async def safe_node_func(state: GraphState) -> GraphState:
             req, ctx = state["request"], state["ctx"]
-            
-            if ctx.errors:
-                return state
-                
+            if ctx.errors: return state
             try:
                 await stage_callable(req, ctx)
             except Exception as e:
                 logger.error(f"[{node_name}] 파이프라인 치명적 예외 발생: {str(e)}", exc_info=True)
-                ctx.errors.append({
-                    "node": node_name, 
-                    "error": str(e), 
-                    "type": type(e).__name__
-                })
+                ctx.errors.append({"node": node_name, "error": str(e), "type": type(e).__name__})
             return state
         return safe_node_func
 
-    # --- Node 래퍼 할당 ---
     node_input_guard = make_safe_node("input_guard", ig)
     node_planner = make_safe_node("planner", pln)
     node_query_expansion = make_safe_node("query_expansion", qx)
@@ -660,89 +651,70 @@ def build_graph():
     node_generator = make_safe_node("generator", gen)
     node_post_check = make_safe_node("post_check", pc)
 
-    # --- [NEW] Semantic Cache Check Node ---
+    # --- [MODIFIED] Cache Check Node: 미스 시 intent 초기화 추가 ---
     async def node_cache_check(state: GraphState) -> GraphState:
         req, ctx = state["request"], state["ctx"]
-        
-        # 캐시 매니저를 통해 질문 유사도 검사 (Threshold 0.90)
         cached_response = cache_manager.check_cache(req.user_query, threshold=0.90)
         
         if cached_response:
             ctx.raw_generation = cached_response
-            ctx.intent = "cache_hit"  # 텔레메트리 식별용 및 라우팅 플래그
+            ctx.intent = "cache_hit"
             logger.info("[Router] Cache HIT -> 파이프라인 우회 (END)")
         else:
+            # 캐시 미스 시 intent를 비워두어 Planner가 새 의도를 채우게 함
+            ctx.intent = None 
             logger.info("[Router] Cache MISS -> 정상 파이프라인 진입")
-            
         return state
 
-    # --- [NEW] Semantic Cache Save Node ---
     async def node_cache_save(state: GraphState) -> GraphState:
         req, ctx = state["request"], state["ctx"]
-        
-        # 에러가 없고, 정상적으로 텍스트가 생성되었으며, 안전한 질의인 경우에만 캐시에 저장
         if not ctx.errors and getattr(ctx, "raw_generation", None) and getattr(ctx.input_guard, "is_safe", True):
              cache_manager.save_cache(req.user_query, ctx.raw_generation)
         return state
 
-    # --- Global Fallback Node ---
     async def node_error_handler(state: GraphState) -> GraphState:
         ctx = state["ctx"]
-        logger.warning(f"[ErrorHandler] {len(ctx.errors)}개의 에러 감지. Fallback 응답을 생성합니다.")
         last_error_node = ctx.errors[-1]["node"] if ctx.errors else "unknown"
-        
-        ctx.raw_generation = "현재 시스템 내부 연산 지연 또는 통신 장애가 발생하여 답변을 생성할 수 없습니다. 잠시 후 다시 시도해 주세요."
+        ctx.raw_generation = "현재 시스템 내부 연산 지연 또는 통신 장애가 발생하여 답변을 생성할 수 없습니다."
         ctx.postcheck = {"is_valid": False, "reason": f"System Fallback triggered by {last_error_node}"}
         return state
 
-    # --- 라우팅 (Conditional Edge) 로직 ---
+    # --- Routing Logic ---
     def route_after_input_guard(state: GraphState) -> str:
         ctx = state["ctx"]
         if ctx.errors: return "error_handler"
-        if not ctx.input_guard.is_safe:
-            logger.warning(f"[Router] InputGuard 보안 위반 감지 -> Prompt Maker로 우회")
-            return "prompt_maker"
-        # 보안 검사 통과 시 무조건 Cache Check로 이동
+        if not ctx.input_guard.is_safe: return "prompt_maker"
         return "cache_check"
 
     def route_after_cache(state: GraphState) -> str:
         ctx = state["ctx"]
-        # 캐시 히트 시 파이프라인 종료 (END로 직행)
-        if ctx.intent == "cache_hit":
-            return END
+        if ctx.intent == "cache_hit": return END
         return "planner"
 
     def route_after_planner(state: GraphState) -> str:
         ctx = state["ctx"]
         if ctx.errors: return "error_handler"
         if ctx.intent == "security_violation" or getattr(ctx, "skip_retrieval", False):
-            logger.info(f"[Router] {ctx.intent} 의도 감지 -> Prompt Maker 직행")
             return "prompt_maker"
-        logger.info("[Router] 검색 파이프라인 진입 -> Query Expansion")
         return "query_expansion"
 
     def route_after_retrieval(state: GraphState) -> str:
         ctx = state["ctx"]
         if ctx.errors: return "error_handler"
-        if getattr(ctx, "skip_reranker", False):
-            logger.info("[Router] Reranker 스킵 -> Assembly 직행")
-            return "assembly"
-        logger.info("[Router] Reranker 파이프라인 진입")
+        if getattr(ctx, "skip_reranker", False): return "assembly"
         return "reranking"
 
     def check_error_and_route(next_node: str):
         def router(state: GraphState) -> str:
-            if state["ctx"].errors:
-                return "error_handler"
+            if state["ctx"].errors: return "error_handler"
             return next_node
         return router
 
-    # --- LangGraph 조립 ---
+    # --- Graph Assembly ---
     g = StateGraph(GraphState)
 
-    # 1. 노드 등록
     g.add_node("input_guard", node_input_guard)
-    g.add_node("cache_check", node_cache_check)  # 캐시 확인 노드
+    g.add_node("cache_check", node_cache_check)
     g.add_node("planner", node_planner)
     g.add_node("query_expansion", node_query_expansion)
     g.add_node("retrieval", node_retrieval)
@@ -753,13 +725,12 @@ def build_graph():
     g.add_node("packing", node_packing)
     g.add_node("prompt_maker", node_prompt_maker)
     g.add_node("generator", node_generator)
-    g.add_node("cache_save", node_cache_save)    # 캐시 저장 노드
+    g.add_node("cache_save", node_cache_save)
     g.add_node("post_check", node_post_check)
     g.add_node("error_handler", node_error_handler)
 
     g.set_entry_point("input_guard")
     
-    # 2. 브랜치 라우팅 엣지
     g.add_conditional_edges("input_guard", route_after_input_guard, {
         "cache_check": "cache_check",
         "prompt_maker": "prompt_maker",
@@ -783,7 +754,6 @@ def build_graph():
         "error_handler": "error_handler"
     })
 
-    # 3. 단일 흐름 엣지에 Circuit Breaker 적용
     g.add_conditional_edges("query_expansion", check_error_and_route("retrieval"))
     g.add_conditional_edges("reranking", check_error_and_route("filtering"))
     g.add_conditional_edges("filtering", check_error_and_route("assembly"))
@@ -791,14 +761,10 @@ def build_graph():
     g.add_conditional_edges("compression", check_error_and_route("packing"))
     g.add_conditional_edges("packing", check_error_and_route("prompt_maker"))
     g.add_conditional_edges("prompt_maker", check_error_and_route("generator"))
-    
-    # Generator 완료 후 반드시 캐시 저장 노드를 거치도록 설정 (중복 에러 해결)
     g.add_conditional_edges("generator", check_error_and_route("cache_save"))
     g.add_conditional_edges("cache_save", check_error_and_route("post_check"))
-    
     g.add_conditional_edges("post_check", check_error_and_route(END))
 
-    # 에러 핸들러 처리 완료 후 그래프 종료
     g.add_edge("error_handler", END)
 
     return g.compile()
