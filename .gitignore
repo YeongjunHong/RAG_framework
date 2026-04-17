@@ -7,27 +7,33 @@ venv/
 .env
 .env.*
 
-
-# Ignore IDE or editor configuration files.
+# --- [IDE & Build] ---
 build/
 dist/
 .vscode/
 .idea/
 
-# Ignore files.
+# --- [Data & Evaluation] ---
+/data/
+*.json
+!settings/*.json  # 아래에서 특정 파일만 뺄 것이므로 일단 json 전역 무시는 하되 세팅 예외 룰 적용 보류
+
+# 명시적 무시 (JSON 전역 무시를 하더라도 확실히 하기 위함)
+scripts/ragas_report.json
+data/golden_eval_dataset.json
+
+# --- [Settings Folder] ---
+# settings 폴더 내부를 모두 무시
+/settings/*
+# 단, 아래 두 파일만 예외로 Git 추적 허용
+!/settings/alembic.ini
+!/settings/config.py
+
+# --- [Logs & Artifacts] ---
 *.log
 *.spec
 *.csv
 *.xlsx
-*.jsonl
-*Zone.Identifier
-
-
-# 세팅 폴더 제거 
-/settings/
-
-# --- [Logs & Artifacts] (가장 중요) ---
-# 데모를 돌리면서 생성된 로컬 로그와 트레이스 파일들은 절대 올리지 않음
 *.jsonl
 showcase_history.jsonl
 demo_traces.jsonl
@@ -36,7 +42,4 @@ scripts/demo_traces.jsonl
 # --- [System] ---
 .DS_Store
 Thumbs.db
-
-# --- [Exceptions] ---
-# settings 폴더 안에 있는 설정용 JSON은 코드의 일부이므로 예외적으로 허용
-!settings/*.json
+*Zone.Identifier
