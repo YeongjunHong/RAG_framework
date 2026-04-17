@@ -1,17 +1,18 @@
-# Ignore directories for virtual environments.
-.venv/
+# --- [Python/Venv] ---
+__pycache__/
+*.py[cod]
+*$py.class
 venv/
+.venv/
+.env
+.env.*
+
 
 # Ignore IDE or editor configuration files.
 build/
 dist/
 .vscode/
 .idea/
-
-# Ignore files related to package dependencies.
-**/__pycache__/
-*.pyc
-*.pyo
 
 # Ignore files.
 *.log
@@ -20,17 +21,22 @@ dist/
 *.xlsx
 *.jsonl
 *Zone.Identifier
-logs/
-reports/
+
 
 # 세팅 폴더 제거 
 /settings/
 
-# --- [데모 및 테스트 스크립트 제외] ---
-run_demo.py
-run_showcase.py
-test_api.py
-test_graph.py
-test_retriever.py
-find_ground_truth.py
-tests/connection_test.py
+# --- [Logs & Artifacts] (가장 중요) ---
+# 데모를 돌리면서 생성된 로컬 로그와 트레이스 파일들은 절대 올리지 않음
+*.jsonl
+showcase_history.jsonl
+demo_traces.jsonl
+scripts/demo_traces.jsonl
+
+# --- [System] ---
+.DS_Store
+Thumbs.db
+
+# --- [Exceptions] ---
+# settings 폴더 안에 있는 설정용 JSON은 코드의 일부이므로 예외적으로 허용
+!settings/*.json
