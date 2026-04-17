@@ -166,7 +166,7 @@ graph TD
 
 ---
 
-## 7. How to Run (MLOps Workflow)
+## 7. How to Run 
 
 본 프레임워크는 데이터셋 구축부터 정량 평가까지의 전 과정을 **원클릭 파이프라인 자동화**로 지원합니다.
 
