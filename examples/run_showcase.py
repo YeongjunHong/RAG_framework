@@ -104,8 +104,13 @@ async def run_showcase(app, scenario: dict, langfuse_cb):
     print(f"{C_BOLD}[진행]{C_RESET} ", end="", flush=True)
 
     try:
-        # 1. 그래프 흐름 수집 (여기서는 흐름만 파악하므로 Langfuse 기록 안 함)
-        async for event in app.astream(inputs, config={"configurable": {"thread_id": str(uuid4())}}):
+        # [핵심 리팩토링] ainvoke 삭제. astream 한 번으로 흐름, 콜백, 상태 획득을 동시에 처리
+        config = {
+            "configurable": {"thread_id": str(uuid4())},
+            "callbacks": [langfuse_cb]  # Langfuse 트레이스 콜백 삽입
+        }
+        
+        async for event in app.astream(inputs, config=config):
             for node_name in event.keys():
                 if node_name not in flow_steps:
                     flow_steps.append(node_name)
@@ -114,17 +119,11 @@ async def run_showcase(app, scenario: dict, langfuse_cb):
         print(f"{C_BOLD}완료{C_RESET}")
         print(f"\n{C_BOLD}[시스템 답변]{C_RESET}")
 
-        # 2. 최종 상태 가져오기 및 답변 생성
-        # [핵심] ainvoke 실행 시 Langfuse 콜백 주입
-        final_state = await app.ainvoke(
-            inputs, 
-            config={"callbacks": [langfuse_cb]}
-        )
-        final_ctx = final_state["ctx"]
+        # astream을 통과하면서 원본 ctx 객체가 메모리 상에서 최종 상태로 자동 업데이트 됨
+        final_ctx = ctx
 
         # 3. 답변 출력 (스트리밍/배치)
         if final_ctx.intent == "cache_hit":
-            # 캐시 적중 시 스트리밍 없이 즉시 완성본 출력
             if getattr(final_ctx, "raw_generation", None):
                 print(f"{C_GREEN}{final_ctx.raw_generation}{C_RESET}\n")
         elif scenario["stream"]:
@@ -159,15 +158,25 @@ async def run_showcase(app, scenario: dict, langfuse_cb):
                 elif eq.intent == "semantic":
                     print(f"  {C_CYAN}[다중 쿼리]{C_RESET} {eq.content} {C_YELLOW}→ 타겟 채널: [{channels_str}]{C_RESET}")
 
-        # 5. 최종 텔레메트리 출력
+        # 5. 최종 텔레메트리 출력 (Cache 모순 완벽 해결)
         security_info = ""
         if not final_ctx.input_guard.is_safe:
             security_info = f" | {C_RED}Security Alert: {final_ctx.input_guard.status}{C_RESET}"
 
+        is_cache_hit = (final_ctx.intent == "cache_hit")
+        context_count = len(getattr(final_ctx, 'filtered', []))
+        
         print(f"{C_CYAN}----------------------------------------------------------------------{C_RESET}")
-        print(f"{C_BOLD}[Telemetry]{C_RESET} Intent: {C_BOLD}{final_ctx.intent}{C_RESET}{security_info} | "
-              f"Context: {len(getattr(final_ctx, 'filtered', []))} Chunks | "
-              f"Time: {C_YELLOW}{elapsed:.2f}s{C_RESET}")
+        if is_cache_hit:
+            # 캐시가 터졌을 때는 오직 HIT 표시와 시간만 출력
+            print(f"{C_BOLD}[Telemetry]{C_RESET} {C_GREEN}✅ Cache HIT{C_RESET} | "
+                  f"Time: {C_YELLOW}{elapsed:.2f}s{C_RESET}")
+        else:
+            # 캐시가 안 터졌을 때는 Intent, Context Chunks, Time을 정확히 출력
+            print(f"{C_BOLD}[Telemetry]{C_RESET} Intent: {C_BOLD}{final_ctx.intent}{C_RESET}{security_info} | "
+                  f"Cache: {C_RED}❌ MISS{C_RESET} | "
+                  f"Context: {C_PURPLE}{context_count} Chunks{C_RESET} | "
+                  f"Time: {C_YELLOW}{elapsed:.2f}s{C_RESET}")
         
         # 로그 저장
         log_to_file({
@@ -175,7 +184,7 @@ async def run_showcase(app, scenario: dict, langfuse_cb):
             "scenario": scenario["id"],
             "query": scenario["query"],
             "intent": final_ctx.intent,
-            "security": final_ctx.input_guard.dict(),
+            "security": final_ctx.input_guard.dict() if hasattr(final_ctx, 'input_guard') else None,
             "expanded_queries": [{"content": eq.content, "intent": eq.intent, "channels": list(eq.channels)} for eq in expanded],
             "latency": elapsed,
             "flow": flow_steps
@@ -187,7 +196,7 @@ async def run_showcase(app, scenario: dict, langfuse_cb):
 async def main():
     print(f"{C_BOLD}{C_GREEN} RAG 프레임워크 가동...{C_RESET}")
 
-    # [추가된 부분] 데모 시작 전 캐시 초기화 여부 묻기
+    # 데모 시작 전 캐시 초기화 여부 묻기
     user_input = input("데모 시작 전 캐시를 초기화하시겠습니까? (y/N): ").strip().lower()
     if user_input == 'y':
         from src.rag.plugins.cache_manager import SemanticCacheManager
@@ -213,7 +222,7 @@ async def main():
         
     print(f"\n{C_BOLD}{C_GREEN}모든 시나리오가 종료되었습니다. 로그 파일(showcase_history.jsonl)을 확인하세요.{C_RESET}")
 
-    # [핵심] 종료 전 메모리의 트레이스 데이터를 강제로 서버로 전송
+    # 종료 전 메모리의 트레이스 데이터를 강제로 서버로 전송
     print(f"{C_CYAN} [*] Langfuse로 트레이스 데이터를 전송 중입니다...{C_RESET}")
     langfuse_client.flush()
     print(f"{C_GREEN}  전송 완료! 대시보드를 확인하세요.{C_RESET}")
