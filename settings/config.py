@@ -26,8 +26,8 @@ with open(yaml_path, "r", encoding="utf-8") as f:
 
 def get_nested_value(data_dict: dict, keys: list, default=None):
     """
-    중첩된 딕셔너리에서 키 경로를 따라 값을 찾아 반환합니다.
-    경로 중 어느 하나라도 키가 존재하지 않으면 default 값을 반환합니다.
+    중첩된 딕셔너리에서 키 경로를 따라 값을 찾아 반환
+    경로 중 어느 하나라도 키가 존재하지 않으면 default 값을 반환
 
     Args:
         data_dict (dict): 값을 찾을 딕셔너리.
