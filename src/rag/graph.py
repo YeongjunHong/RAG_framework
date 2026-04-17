@@ -558,6 +558,303 @@
 #     return to_response(out)["response"]
 
 
+# from typing import TypedDict, Callable
+# from langgraph.graph import StateGraph, END
+
+# from .core.types import SourceChunk, RagRequest, RagResponse, RagContext
+# from .stages.input_guard import InputGuardStage
+# from .stages.planner import PlannerStage, PlannerConfig
+# from .stages.query_expansion import QueryExpansionStage, QueryExpansionConfig
+# from .stages.retrieval import RetrievalStage, RetrievalConfig
+# from .stages.reranking import RerankingStage, RerankingConfig
+# from .stages.filtering import FilteringStage, FilteringConfig
+# from .stages.assembly import AssemblyStage, AssemblyConfig
+# from .stages.compression import CompressionStage, CompressionConfig
+# from .stages.packing import PackingStage, PackingConfig
+# from .stages.prompt_maker import PromptMakerStage, PromptMakerConfig
+# from .stages.generator import GeneratorStage, GeneratorConfig
+# from .stages.post_check import PostCheckStage, PostCheckConfig, to_response
+
+# from .plugins.cache_manager import SemanticCacheManager
+# from .plugins.router import build_llm
+# from .plugins.tracing import build_tracer
+# import src.rag.services.wiring as wiring
+# from src.common.logger import get_logger
+
+# logger = get_logger(__name__)
+
+# class GraphState(TypedDict):
+#     request: RagRequest
+#     ctx: RagContext
+
+# def build_graph():
+#     tracer = build_tracer()
+#     llm = build_llm()
+
+#     # DB 및 Registry 조립 (기존과 동일)
+#     db_session_maker = wiring.build_db_session_maker()
+#     input_guard_registry = wiring.build_input_guard_registry()
+
+#     # [NEW] 캐시 매니저 인스턴스화
+#     cache_manager = SemanticCacheManager(host="localhost", port=6379)
+    
+#     planner_registry = wiring.build_planner_registry()
+#     query_expander_registry = wiring.build_query_expander_registry()
+#     retriever_registry = wiring.build_retriever_registry()
+#     reranker_registry = wiring.build_reranker_registry()
+#     filterer_registry = wiring.build_filterer_registry()
+#     assembler_registry = wiring.build_assembler_registry()
+#     compressor_registry = wiring.build_compressor_registry()
+#     text_compressor_registry = wiring.build_text_compressor_registry() 
+#     packer_registry = wiring.build_packer_registry()
+#     promptmaker_registry = wiring.build_promptmaker_registry()
+#     generator_registry = wiring.build_generator_registry()
+#     postchecker_registry = wiring.build_postchecker_registry()
+
+#     # Stages 인스턴스화 (기존과 동일)
+#     ig = InputGuardStage(registry=input_guard_registry, tracer=tracer, db_session_maker=db_session_maker)
+#     pln = PlannerStage(PlannerConfig(), registry=planner_registry, tracer=tracer)
+#     qx = QueryExpansionStage(config=QueryExpansionConfig(mode="dynamic", max_expansions=4), registry=query_expander_registry, tracer=tracer)
+#     rt = RetrievalStage(RetrievalConfig(), registry=retriever_registry, tracer=tracer)
+#     rr = RerankingStage(RerankingConfig(), registry=reranker_registry, tracer=tracer)
+#     flt = FilteringStage(FilteringConfig())
+#     asm = AssemblyStage(AssemblyConfig())
+#     cmp = CompressionStage(CompressionConfig(), registry=text_compressor_registry)
+#     pck = PackingStage(PackingConfig(), tracer=tracer)
+#     pm = PromptMakerStage(PromptMakerConfig())
+#     gen = GeneratorStage(GeneratorConfig(), llm=llm, tracer=tracer)
+#     pc = PostCheckStage(PostCheckConfig(), guardrails_plugin=postchecker_registry.get("default"), tracer=tracer)
+
+#     # --- Circuit Breaker Pattern: Safe Node Wrapper ---
+#     # 각 스테이지의 실행을 감싸서 예외를 포착하고 상태 객체에 에러를 기록하는 데코레이터 팩토리
+#     def make_safe_node(node_name: str, stage_callable: Callable) -> Callable:
+#         async def safe_node_func(state: GraphState) -> GraphState:
+#             req, ctx = state["request"], state["ctx"]
+            
+#             # 이미 이전 노드에서 에러가 발생했다면 실행을 건너뜀 (Fail-Fast)
+#             if ctx.errors:
+#                 return state
+                
+#             try:
+#                 # ==========================================
+#                 # [장애 주입 테스트] retrieval 노드 도달 시 강제 에러 발생
+#                 # if node_name == "retrieval":
+#                 #     raise ConnectionError("테스트용 강제 DB 타임아웃 발생!")
+#                 # ==========================================
+#                 await stage_callable(req, ctx)
+#             except Exception as e:
+#                 logger.error(f"[{node_name}] 파이프라인 치명적 예외 발생: {str(e)}", exc_info=True)
+#                 # 에러 트레이스를 ctx에 기록하여 라우터가 Fallback 경로를 타도록 유도
+#                 ctx.errors.append({
+#                     "node": node_name, 
+#                     "error": str(e), 
+#                     "type": type(e).__name__
+#                 })
+#             return state
+#         return safe_node_func
+
+#     # --- Node 래퍼 할당 (보일러플레이트 제거 및 안전성 확보) ---
+#     node_input_guard = make_safe_node("input_guard", ig)
+#     node_planner = make_safe_node("planner", pln)
+#     node_query_expansion = make_safe_node("query_expansion", qx)
+#     node_retrieval = make_safe_node("retrieval", rt)
+#     node_reranking = make_safe_node("reranking", rr)
+#     node_filtering = make_safe_node("filtering", flt)
+#     node_assembly = make_safe_node("assembly", asm)
+#     node_compression = make_safe_node("compression", cmp)
+#     node_packing = make_safe_node("packing", pck)
+#     node_prompt_maker = make_safe_node("prompt_maker", pm)
+#     node_generator = make_safe_node("generator", gen)
+#     node_post_check = make_safe_node("post_check", pc)
+
+#     # --- [NEW] Semantic Cache Node ---
+#     async def node_cache_check(state: GraphState) -> GraphState:
+#         req, ctx = state["request"], state["ctx"]
+        
+#         # 캐시 매니저를 통해 질문 유사도 검사 (Threshold 0.90)
+#         cached_response = cache_manager.check_cache(req.user_query, threshold=0.90)
+        
+#         if cached_response:
+#             ctx.raw_generation = cached_response
+#             ctx.intent = "cache_hit"  # 텔레메트리 식별용
+#             ctx.is_cached = True
+#             logger.info("[Router] Cache HIT -> 파이프라인 우회 (END)")
+#         else:
+#             ctx.is_cached = False
+#             logger.info("[Router] Cache MISS -> Planner 진입")
+            
+#         return state
+    
+#     # --- [NEW] Generator 완료 후 캐시 저장 노드 ---
+#     # 파이프라인이 정상적으로 돌아서 답변을 생성했다면, 그걸 캐시에 저장하는 노드
+#     async def node_cache_save(state: GraphState) -> GraphState:
+#         req, ctx = state["request"], state["ctx"]
+#         # 에러가 없었고, 답변이 생성되었으며, 보안에 문제가 없는 경우에만 저장
+#         if not ctx.errors and getattr(ctx, "raw_generation", None) and getattr(ctx.input_guard, "is_safe", True):
+#              cache_manager.save_cache(req.user_query, ctx.raw_generation)
+#         return state
+
+#     # --- Global Fallback Node ---
+#     # 파이프라인 어느 곳에서든 에러가 발생하면 최종적으로 도달하여 안전한 응답을 조립하는 노드
+#     async def node_error_handler(state: GraphState) -> GraphState:
+#         ctx = state["ctx"]
+#         logger.warning(f"[ErrorHandler] {len(ctx.errors)}개의 에러 감지. Fallback 응답을 생성합니다.")
+#         last_error_node = ctx.errors[-1]["node"] if ctx.errors else "unknown"
+        
+#         # 엔터프라이즈 환경에서는 내부 에러를 노출하지 않고 정제된 메시지 반환
+#         ctx.raw_generation = "현재 시스템 내부 트래픽 지연 또는 통신 장애가 발생하여 답변을 생성할 수 없습니다. 잠시 후 다시 시도해 주세요."
+#         ctx.postcheck = {"is_valid": False, "reason": f"System Fallback triggered by {last_error_node}"}
+#         return state
+
+#     # --- 라우팅 (Conditional Edge) 로직 ---
+#     def route_after_input_guard(state: GraphState) -> str:
+#         ctx = state["ctx"]
+#         if ctx.errors: return "error_handler"
+#         if not ctx.input_guard.is_safe:
+#             logger.warning(f"[Router] InputGuard 보안 위반 감지 -> Prompt Maker로 우회")
+#             return "prompt_maker"
+#         # [MODIFIED] 보안 통과 시 Planner가 아니라 Cache로 이동!
+#         return "cache_check"
+    
+#     # [NEW] 캐시 검사 후 라우팅
+#     def route_after_cache(state: GraphState) -> str:
+#         ctx = state["ctx"]
+#         if getattr(ctx, "is_cached", False):
+#             return END  # 캐시 히트면 여기서 파이프라인 종료
+#         return "planner" # 캐시 미스면 정상 RAG 흐름으로
+
+#     def route_after_planner(state: GraphState) -> str:
+#         ctx = state["ctx"]
+#         if ctx.errors: return "error_handler"
+#         if ctx.intent == "security_violation" or getattr(ctx, "skip_retrieval", False):
+#             logger.info(f"[Router] {ctx.intent} 의도 감지 -> Prompt Maker 직행")
+#             return "prompt_maker"
+#         logger.info("[Router] 검색 파이프라인 진입 -> Query Expansion")
+#         return "query_expansion"
+
+#     def route_after_retrieval(state: GraphState) -> str:
+#         ctx = state["ctx"]
+#         if ctx.errors: return "error_handler"
+#         if getattr(ctx, "skip_reranker", False):
+#             logger.info("[Router] Reranker 스킵 -> Assembly 직행")
+#             return "assembly"
+#         logger.info("[Router] Reranker 파이프라인 진입")
+#         return "reranking"
+
+#     # 일반적인 선형 엣지에서도 에러 발생 여부를 체크하는 범용 라우터 생성기
+#     def check_error_and_route(next_node: str):
+#         def router(state: GraphState) -> str:
+#             if state["ctx"].errors:
+#                 return "error_handler"
+#             return next_node
+#         return router
+
+#     # --- LangGraph 조립 ---
+#     g = StateGraph(GraphState)
+
+#     # 1. 노드 등록
+#     g.add_node("input_guard", node_input_guard)
+#     g.add_node("cache_check", node_cache_check)  # [NEW]
+#     g.add_node("planner", node_planner)
+#     g.add_node("query_expansion", node_query_expansion)
+#     g.add_node("retrieval", node_retrieval)
+#     g.add_node("reranking", node_reranking)
+#     g.add_node("filtering", node_filtering)
+#     g.add_node("assembly", node_assembly)
+#     g.add_node("compression", node_compression)
+#     g.add_node("packing", node_packing)
+#     g.add_node("prompt_maker", node_prompt_maker)
+#     g.add_node("generator", node_generator)
+#     g.add_node("cache_save", node_cache_save)    # [NEW]
+#     g.add_node("post_check", node_post_check)
+#     g.add_node("error_handler", node_error_handler) # 에러 핸들러 추가
+
+#     g.set_entry_point("input_guard")
+    
+#     # 3. 브랜치 라우팅 엣지
+#     g.add_conditional_edges("input_guard", route_after_input_guard, {
+#         "cache_check": "cache_check", # 추가 
+#         "planner": "planner",
+#         "prompt_maker": "prompt_maker",
+#         "error_handler": "error_handler"
+#     })
+
+#     g.add_conditional_edges("cache_check", route_after_cache, { # [NEW]
+#         "planner": "planner",
+#         END: END
+#     })
+
+#     g.add_conditional_edges("planner", route_after_planner, {
+#         "query_expansion": "query_expansion", 
+#         "prompt_maker": "prompt_maker",   
+#         "error_handler": "error_handler"     
+#     })
+
+#     g.add_conditional_edges("retrieval", route_after_retrieval, {
+#         "reranking": "reranking",
+#         "assembly": "assembly", 
+#         "error_handler": "error_handler"
+#     })
+
+#     # 4. 단일 흐름 엣지에 Circuit Breaker 적용
+#     g.add_conditional_edges("query_expansion", check_error_and_route("retrieval"))
+#     g.add_conditional_edges("reranking", check_error_and_route("filtering"))
+#     g.add_conditional_edges("filtering", check_error_and_route("assembly"))
+#     g.add_conditional_edges("assembly", check_error_and_route("compression"))
+#     g.add_conditional_edges("compression", check_error_and_route("packing"))
+#     g.add_conditional_edges("packing", check_error_and_route("prompt_maker"))
+#     g.add_conditional_edges("prompt_maker", check_error_and_route("generator"))
+
+#     g.add_conditional_edges("generator", check_error_and_route("cache_save")) # [MODIFIED] 생성 후 캐시 저장
+#     g.add_conditional_edges("cache_save", check_error_and_route("post_check")) # [NEW] 캐시 저장 후 포스트체크
+    
+#     # post_check 이후에도 에러가 났을 수 있으므로 체크 후 END
+#     g.add_conditional_edges("post_check", check_error_and_route(END))
+
+#     # 에러 핸들러 처리 완료 후 그래프 종료
+#     g.add_edge("error_handler", END)
+
+#     return g.compile()
+
+# async def run_graph(app, request: RagRequest) -> RagResponse:
+#     import os
+#     from langfuse.langchain import CallbackHandler
+
+#     # 1. 시스템 환경변수가 아니라, os.getenv로 확실하게 값을 끌어와서 명시적으로 주입 (타이밍 이슈 차단)
+#     lf_public = os.getenv("LANGFUSE_PUBLIC_KEY")
+#     lf_secret = os.getenv("LANGFUSE_SECRET_KEY")
+#     lf_host = os.getenv("LANGFUSE_BASE_URL")
+
+#     # 무조건 콘솔에 찍히도록 print 사용
+#     print(f"\n[*] Langfuse 연결 시도... (Host: {lf_host})")
+
+#     # 콜백 핸들러에 키값을 직접 박아넣음
+#     langfuse_cb = CallbackHandler(
+#         public_key=lf_public,
+#         secret_key=lf_secret,
+#         host=lf_host
+#     )
+
+#     # 2. 확실한 인증 테스트
+#     if langfuse_cb.auth_check():
+#         print(" [Langfuse] 서버 연결 및 인증 성공! (트레이스 기록 시작)")
+#     else:
+#         print(" [Langfuse] 인증 실패! 키값이나 네트워크 상태를 확인하세요.")
+
+#     state: GraphState = {"request": request, "ctx": RagContext()}
+    
+#     # 3. 그래프 실행
+#     out = await app.ainvoke(
+#         state, 
+#         config={"callbacks": [langfuse_cb]}
+#     )
+    
+#     # 4. 메모리에 남은 로그를 서버로 완벽하게 밀어내기
+#     langfuse_cb.flush()
+
+#     return to_response(out)["response"]
+
+
 from typing import TypedDict, Callable
 from langgraph.graph import StateGraph, END
 
@@ -577,6 +874,7 @@ from .stages.post_check import PostCheckStage, PostCheckConfig, to_response
 
 from .plugins.router import build_llm
 from .plugins.tracing import build_tracer
+from .plugins.cache_manager import SemanticCacheManager
 import src.rag.services.wiring as wiring
 from src.common.logger import get_logger
 
@@ -590,9 +888,13 @@ def build_graph():
     tracer = build_tracer()
     llm = build_llm()
 
-    # DB 및 Registry 조립 (기존과 동일)
+    # DB, Registry 및 Cache Manager 조립
     db_session_maker = wiring.build_db_session_maker()
     input_guard_registry = wiring.build_input_guard_registry()
+    
+    # [Cache] 시맨틱 캐시 매니저 초기화 (로컬 Redis 컨테이너 연동)
+    cache_manager = SemanticCacheManager(host="localhost", port=6379)
+    
     planner_registry = wiring.build_planner_registry()
     query_expander_registry = wiring.build_query_expander_registry()
     retriever_registry = wiring.build_retriever_registry()
@@ -606,7 +908,7 @@ def build_graph():
     generator_registry = wiring.build_generator_registry()
     postchecker_registry = wiring.build_postchecker_registry()
 
-    # Stages 인스턴스화 (기존과 동일)
+    # Stages 인스턴스화
     ig = InputGuardStage(registry=input_guard_registry, tracer=tracer, db_session_maker=db_session_maker)
     pln = PlannerStage(PlannerConfig(), registry=planner_registry, tracer=tracer)
     qx = QueryExpansionStage(config=QueryExpansionConfig(mode="dynamic", max_expansions=4), registry=query_expander_registry, tracer=tracer)
@@ -621,25 +923,17 @@ def build_graph():
     pc = PostCheckStage(PostCheckConfig(), guardrails_plugin=postchecker_registry.get("default"), tracer=tracer)
 
     # --- Circuit Breaker Pattern: Safe Node Wrapper ---
-    # 각 스테이지의 실행을 감싸서 예외를 포착하고 상태 객체에 에러를 기록하는 데코레이터 팩토리
     def make_safe_node(node_name: str, stage_callable: Callable) -> Callable:
         async def safe_node_func(state: GraphState) -> GraphState:
             req, ctx = state["request"], state["ctx"]
             
-            # 이미 이전 노드에서 에러가 발생했다면 실행을 건너뜀 (Fail-Fast)
             if ctx.errors:
                 return state
                 
             try:
-                # ==========================================
-                # [장애 주입 테스트] retrieval 노드 도달 시 강제 에러 발생
-                # if node_name == "retrieval":
-                #     raise ConnectionError("테스트용 강제 DB 타임아웃 발생!")
-                # ==========================================
                 await stage_callable(req, ctx)
             except Exception as e:
                 logger.error(f"[{node_name}] 파이프라인 치명적 예외 발생: {str(e)}", exc_info=True)
-                # 에러 트레이스를 ctx에 기록하여 라우터가 Fallback 경로를 타도록 유도
                 ctx.errors.append({
                     "node": node_name, 
                     "error": str(e), 
@@ -648,7 +942,7 @@ def build_graph():
             return state
         return safe_node_func
 
-    # --- Node 래퍼 할당 (보일러플레이트 제거 및 안전성 확보) ---
+    # --- Node 래퍼 할당 ---
     node_input_guard = make_safe_node("input_guard", ig)
     node_planner = make_safe_node("planner", pln)
     node_query_expansion = make_safe_node("query_expansion", qx)
@@ -662,15 +956,38 @@ def build_graph():
     node_generator = make_safe_node("generator", gen)
     node_post_check = make_safe_node("post_check", pc)
 
+    # --- [NEW] Semantic Cache Check Node ---
+    async def node_cache_check(state: GraphState) -> GraphState:
+        req, ctx = state["request"], state["ctx"]
+        
+        # 캐시 매니저를 통해 질문 유사도 검사 (Threshold 0.90)
+        cached_response = cache_manager.check_cache(req.user_query, threshold=0.90)
+        
+        if cached_response:
+            ctx.raw_generation = cached_response
+            ctx.intent = "cache_hit"  # 텔레메트리 식별용 및 라우팅 플래그
+            logger.info("[Router] Cache HIT -> 파이프라인 우회 (END)")
+        else:
+            logger.info("[Router] Cache MISS -> 정상 파이프라인 진입")
+            
+        return state
+
+    # --- [NEW] Semantic Cache Save Node ---
+    async def node_cache_save(state: GraphState) -> GraphState:
+        req, ctx = state["request"], state["ctx"]
+        
+        # 에러가 없고, 정상적으로 텍스트가 생성되었으며, 안전한 질의인 경우에만 캐시에 저장
+        if not ctx.errors and getattr(ctx, "raw_generation", None) and getattr(ctx.input_guard, "is_safe", True):
+             cache_manager.save_cache(req.user_query, ctx.raw_generation)
+        return state
+
     # --- Global Fallback Node ---
-    # 파이프라인 어느 곳에서든 에러가 발생하면 최종적으로 도달하여 안전한 응답을 조립하는 노드
     async def node_error_handler(state: GraphState) -> GraphState:
         ctx = state["ctx"]
         logger.warning(f"[ErrorHandler] {len(ctx.errors)}개의 에러 감지. Fallback 응답을 생성합니다.")
         last_error_node = ctx.errors[-1]["node"] if ctx.errors else "unknown"
         
-        # 엔터프라이즈 환경에서는 내부 에러를 노출하지 않고 정제된 메시지 반환
-        ctx.raw_generation = "현재 시스템 내부 트래픽 지연 또는 통신 장애가 발생하여 답변을 생성할 수 없습니다. 잠시 후 다시 시도해 주세요."
+        ctx.raw_generation = "현재 시스템 내부 연산 지연 또는 통신 장애가 발생하여 답변을 생성할 수 없습니다. 잠시 후 다시 시도해 주세요."
         ctx.postcheck = {"is_valid": False, "reason": f"System Fallback triggered by {last_error_node}"}
         return state
 
@@ -681,6 +998,14 @@ def build_graph():
         if not ctx.input_guard.is_safe:
             logger.warning(f"[Router] InputGuard 보안 위반 감지 -> Prompt Maker로 우회")
             return "prompt_maker"
+        # 보안 검사 통과 시 무조건 Cache Check로 이동
+        return "cache_check"
+
+    def route_after_cache(state: GraphState) -> str:
+        ctx = state["ctx"]
+        # 캐시 히트 시 파이프라인 종료 (END로 직행)
+        if ctx.intent == "cache_hit":
+            return END
         return "planner"
 
     def route_after_planner(state: GraphState) -> str:
@@ -701,7 +1026,6 @@ def build_graph():
         logger.info("[Router] Reranker 파이프라인 진입")
         return "reranking"
 
-    # 일반적인 선형 엣지에서도 에러 발생 여부를 체크하는 범용 라우터 생성기
     def check_error_and_route(next_node: str):
         def router(state: GraphState) -> str:
             if state["ctx"].errors:
@@ -714,6 +1038,7 @@ def build_graph():
 
     # 1. 노드 등록
     g.add_node("input_guard", node_input_guard)
+    g.add_node("cache_check", node_cache_check)  # 캐시 확인 노드
     g.add_node("planner", node_planner)
     g.add_node("query_expansion", node_query_expansion)
     g.add_node("retrieval", node_retrieval)
@@ -724,16 +1049,22 @@ def build_graph():
     g.add_node("packing", node_packing)
     g.add_node("prompt_maker", node_prompt_maker)
     g.add_node("generator", node_generator)
+    g.add_node("cache_save", node_cache_save)    # 캐시 저장 노드
     g.add_node("post_check", node_post_check)
-    g.add_node("error_handler", node_error_handler) # 에러 핸들러 추가
+    g.add_node("error_handler", node_error_handler)
 
     g.set_entry_point("input_guard")
     
-    # 3. 브랜치 라우팅 엣지
+    # 2. 브랜치 라우팅 엣지
     g.add_conditional_edges("input_guard", route_after_input_guard, {
-        "planner": "planner",
+        "cache_check": "cache_check",
         "prompt_maker": "prompt_maker",
         "error_handler": "error_handler"
+    })
+
+    g.add_conditional_edges("cache_check", route_after_cache, {
+        "planner": "planner",
+        END: END
     })
 
     g.add_conditional_edges("planner", route_after_planner, {
@@ -748,7 +1079,7 @@ def build_graph():
         "error_handler": "error_handler"
     })
 
-    # 4. 단일 흐름 엣지에 Circuit Breaker 적용
+    # 3. 단일 흐름 엣지에 Circuit Breaker 적용
     g.add_conditional_edges("query_expansion", check_error_and_route("retrieval"))
     g.add_conditional_edges("reranking", check_error_and_route("filtering"))
     g.add_conditional_edges("filtering", check_error_and_route("assembly"))
@@ -756,50 +1087,14 @@ def build_graph():
     g.add_conditional_edges("compression", check_error_and_route("packing"))
     g.add_conditional_edges("packing", check_error_and_route("prompt_maker"))
     g.add_conditional_edges("prompt_maker", check_error_and_route("generator"))
-    g.add_conditional_edges("generator", check_error_and_route("post_check"))
     
-    # post_check 이후에도 에러가 났을 수 있으므로 체크 후 END
+    # Generator 완료 후 반드시 캐시 저장 노드를 거치도록 설정 (중복 에러 해결)
+    g.add_conditional_edges("generator", check_error_and_route("cache_save"))
+    g.add_conditional_edges("cache_save", check_error_and_route("post_check"))
+    
     g.add_conditional_edges("post_check", check_error_and_route(END))
 
     # 에러 핸들러 처리 완료 후 그래프 종료
     g.add_edge("error_handler", END)
 
     return g.compile()
-
-async def run_graph(app, request: RagRequest) -> RagResponse:
-    import os
-    from langfuse.langchain import CallbackHandler
-
-    # 1. 시스템 환경변수가 아니라, os.getenv로 확실하게 값을 끌어와서 명시적으로 주입 (타이밍 이슈 차단)
-    lf_public = os.getenv("LANGFUSE_PUBLIC_KEY")
-    lf_secret = os.getenv("LANGFUSE_SECRET_KEY")
-    lf_host = os.getenv("LANGFUSE_BASE_URL")
-
-    # 무조건 콘솔에 찍히도록 print 사용
-    print(f"\n[*] Langfuse 연결 시도... (Host: {lf_host})")
-
-    # 콜백 핸들러에 키값을 직접 박아넣음
-    langfuse_cb = CallbackHandler(
-        public_key=lf_public,
-        secret_key=lf_secret,
-        host=lf_host
-    )
-
-    # 2. 확실한 인증 테스트
-    if langfuse_cb.auth_check():
-        print(" [Langfuse] 서버 연결 및 인증 성공! (트레이스 기록 시작)")
-    else:
-        print(" [Langfuse] 인증 실패! 키값이나 네트워크 상태를 확인하세요.")
-
-    state: GraphState = {"request": request, "ctx": RagContext()}
-    
-    # 3. 그래프 실행
-    out = await app.ainvoke(
-        state, 
-        config={"callbacks": [langfuse_cb]}
-    )
-    
-    # 4. 메모리에 남은 로그를 서버로 완벽하게 밀어내기
-    langfuse_cb.flush()
-
-    return to_response(out)["response"]
