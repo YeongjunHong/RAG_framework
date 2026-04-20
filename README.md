@@ -62,45 +62,63 @@ LangGraph 노드 단위로 실행되는 독립적 책임 단위입니다.
 
 본 프레임워크는 유지보수와 확장성을 극대화하기 위해 책임이 명확히 분리된 디렉토리 구조를 가집니다.
 
+## 5. Directory Structure 
+
+본 프레임워크는 각 모듈의 책임이 엄격히 분리되어 있으며, 특히 **LangGraph 기반의 Stage**와 **구현체 중심의 Plugin** 구조를 통해 높은 확장성을 보장합니다.
+
 ```text
 RAG_framework/
-├── data/                             # Golden Dataset 및 평가 데이터 저장소
-├── examples/                         # 대화형 데모 및 시나리오 실행 스크립트
-│   ├── run_showcase.py               # E2E 복합 추론 시나리오 벤치마크 데모
-│   └── run_demo.py                   # 기본 기능 확인용 경량 데모
-├── scripts/                          # MLOps 자동화 스크립트
+├── data/                             # Golden Dataset 및 평가 결과 리포트 적재
+├── examples/                         # 시스템 시연 및 시나리오 벤치마크
+│   ├── run_demo.py                   # 기본 기능 단위 검증용 데모
+│   └── run_showcase.py               # E2E 복합 추론 및 보안 시나리오 통합 데모
+├── pg-ext/                           # Docker 기반 PostgreSQL/pgvector 인프라 구성
+├── scripts/                          # MLOps 자동화 및 하이퍼파라미터 튜닝
 │   ├── build_eval_dataset.py         # HF 데이터셋 기반 평가 데이터 자동 구축
-│   ├── tune_threshold.py             # F1-Score 기반 검색 임계값 최적화 (Calibration)
-│   └── evaluate_ragas.py             # RAGAS 기반 정량적 품질 평가 엔진
-├── settings/                         # 애플리케이션 환경 설정 및 인프라 구성
-│   ├── config.py / config.yaml       # 전역 환경 변수 및 파이프라인 설정 관리
-│   └── alembic.ini                   # DB 마이그레이션 설정
+│   ├── evaluate_ragas.py             # RAGAS 기반 정량 품질 평가 엔진
+│   ├── find_ground_truth.py          # 평가용 정답지 매칭 보조 툴
+│   └── tune_threshold.py             # F1-Score 기반 검색 임계값 최적화 (Calibration)
+├── settings/                         # 전역 환경 변수 및 DB 마이그레이션 설정
 ├── src/
-│   ├── api/                          # FastAPI 기반 서빙 레이어 (routes.py)
-│   ├── common/                       # 공통 유틸리티 (Logger, Config, Utils)
-│   ├── pgdb/                         # PostgreSQL/pgvector 스키마 및 마이그레이션 관리
-│   │   ├── schema.py                 # SQLAlchemy 기반 DB 모델 정의
-│   │   ├── pg_crud.py                # Raw SQL 및 CRUD 인터페이스 구현체
-│   │   └── versions/                 # Alembic 기반 점진적 스키마 히스토리
-│   └── rag/                          # 핵심 RAG 로직 (Main Domain)
-│       ├── core/                     # 인터페이스 추상화 및 공통 타입 정의
-│       ├── plugins/                  # 외부 의존성(LLM, DB, Cache) 구현체
+│   ├── api/                          # FastAPI 서빙 레이어 및 라우팅 (routes.py)
+│   ├── common/                       # 공통 유틸리티 (Config, Logger, Helper, Utils)
+│   ├── evaluation/                   # 성능 지표(Metrics) 정의 및 Runner
+│   ├── pgdb/                         # Database 추상화 및 Alembic 마이그레이션 관리
+│   │   ├── schema.py                 # SQLAlchemy 기반 DB 스키마 명세
+│   │   ├── pg_crud.py                # CRUD 및 비동기 DB 인터페이스 구현체
+│   │   └── versions/                 # Alembic 기반 점진적 스키마 히스토리 (init ~ 2026-04)
+│   └── rag/                          # 핵심 RAG 도메인 로직
+│       ├── bulk_source/              # 데이터 Ingestion 및 Few-shot 예제 관리
+│       ├── core/                     # 인터페이스 추상화(ABC) 및 공통 도메인 모델(Types)
+│       ├── graph.py                  # LangGraph 상태 머신 및 전체 워크플로우 정의
+│       ├── services/                 # 플러그인 생명주기 및 의존성 주입(Wiring) 관리
+│       ├── plugins/                  # 실질적인 로직을 수행하는 구현체 레이어 (Adapters)
 │       │   ├── cache_manager.py      # Redis 기반 Semantic Vector Caching
-│       │   ├── input_guard_regex.py  # Regex 기반 보안 가드레일 구현
-│       │   ├── postgres_retriever.py # Hybrid(Dense+Sparse) 검색 플러그인
-│       │   ├── local_reranker.py     # Cross-Encoder 로컬 추론 엔진
-│       │   └── openrouter_generator.py # OpenRouter 기반 답변 생성 엔진
-│       ├── services/                 # DI(Dependency Injection) 및 레지스트리 관리
-│       │   ├── registry.py           # 플러그인 객체 생명주기 관리 컨테이너
-│       │   └── wiring.py             # 애플리케이션 시작 시 의존성 조립(Wiring)
-│       ├── stages/                   # LangGraph 노드로 동작하는 독립 실행 단위
-│       │   ├── input_guard.py        # 보안 및 PII 차단 (Fail-fast)
-│       │   ├── planner.py            # 의도 분석 및 동적 라우팅 제어
-│       │   ├── filtering.py          # 임계값 기반 노이즈 제거
-│       │   ├── generator.py          # 조기 종료(Early Exit)가 적용된 LLM 생성
-│       │   └── post_check.py         # 판관 모델 기반 Groundedness 검증
-│       └── graph.py                  # LangGraph 상태 머신 및 파이프라인 워크플로우
-├── tests/                            # 단위 테스트 및 파이프라인 통합 테스트
+│       │   ├── guardrails_runner.py  # 답변 안전성 검증 실행기
+│       │   ├── input_guard_regex.py  # 정규식 기반 보안 정책 검사
+│       │   ├── local_reranker.py     # Cross-Encoder 기반 로컬 재채점 엔진
+│       │   ├── openrouter_generator.py # OpenRouter API 기반 스트리밍 생성기
+│       │   ├── postgres_retriever.py # Hybrid Search(Vector+BM25) 물리 엔진
+│       │   ├── qe_keyword.py         # BM25 타격용 키워드 추출기
+│       │   ├── qe_multi_query.py     # 의미론적 확장을 위한 다중 쿼리 생성기
+│       │   ├── slm_planner.py        # SLM 기반 의도 분류 및 라우팅 플래너
+│       │   ├── text_compressor.py    # 토큰 최적화를 위한 2-Step 텍스트 압축기
+│       │   └── tracing.py            # 파이프라인 텔레메트리 트레이싱
+│       └── stages/                   # LangGraph 노드 단위 실행 로직
+│           ├── input_guard.py        # 보안 및 PII 차단 (Fail-fast)
+│           ├── planner.py            # 쿼리 의도 분석 및 라우팅 결정
+│           ├── query_expansion.py    # 사용자 쿼리 다각화
+│           ├── retrieval.py          # 하이브리드 검색 및 RRF 랭킹 결합
+│           ├── reranking.py          # 문맥 유사도 재평가
+│           ├── filtering.py          # 동적 임계값 기반 노이즈 제거
+│           ├── dynamic_skip.py       # 의도에 따른 특정 스테이지 동적 스킵 로직
+│           ├── assembly.py           # 청크 병합 및 논리적 정렬
+│           ├── compression.py        # 토큰 예산 기반 컨텍스트 압축
+│           ├── packing.py            # XML 마크업 직렬화
+│           ├── prompt_maker.py       # 시스템 지시어 스위칭 및 최종 프롬프트 조립
+│           ├── generator.py          # 조기 종료가 적용된 LLM 답변 생성
+│           └── post_check.py         # LLM Judge 기반 근거(Groundedness) 검증
+└── tests/                            # 모듈별 단위 테스트 및 통합 테스트
 ├── run_pipeline.sh                   # [Build -> Tune -> Demo -> Eval] 원클릭 실행기
 ├── main.py                           # 애플리케이션 엔트리포인트 (API 실행)
 └── requirements.txt                  # 프로젝트 의존성 명세
