@@ -193,3 +193,29 @@ graph TD
 ```bash
 # 환경 변수 파일을 지정하여 백그라운드에서 인프라 기동
 docker-compose --env-file ./settings/.env.poc up --build -d
+```
+
+### 7.2 전체 파이프라인 자동 실행
+
+본 프레임워크는 [Build Dataset] -> [Tune Thresholds] -> [Run Showcase] -> [Evaluate RAGAS] 시퀀스를 한 번에 실행하는 쉘 스크립트를 제공합니다.
+
+```bash
+# 1. 실행 권한 부여
+chmod +x run_pipeline.sh
+
+# 2. 전체 파이프라인 실행 (인자값: 인텐트당 샘플 개수, 기본값: 5)
+./run_pipeline.sh 3
+
+```
+### 7.3 개별 모듈 테스트 (API & Worker)
+
+특정 서비스의 로그를 실시간으로 확인하며 테스트하고 싶은 경우 아래 명령어를 사용합니다.
+
+```bash
+# API 서버 로그 확인
+docker-compose logs -f api
+
+# 백그라운드 워커 로그 확인
+docker-compose logs -f worker
+
+```
