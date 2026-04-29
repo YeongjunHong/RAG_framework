@@ -289,9 +289,9 @@ from src.rag.plugins.input_guard_regex import RegexInputGuard
 from src.rag.plugins.qe_keyword import KeywordExtractorPlugin
 from src.rag.plugins.qe_multi_query import MultiQueryPlugin
 
-# 신규 플러그인 임포트 (Semantic Text Compression)
-from src.rag.plugins.text_compressor import SLMTextCompressorPlugin
-
+# [MODIFIED] 기존 SLMTextCompressorPlugin 거품을 걷어내고 LLMLingua 도입
+# from src.rag.plugins.text_compressor import LLMLinguaCompressorPlugin
+from src.rag.plugins.text_compressor import PassThroughCompressorPlugin
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
 def build_planner_registry(**kwargs) -> registry.PlannerRegistry:
@@ -319,12 +319,16 @@ def build_input_guard_registry(**kwargs) -> registry.InputGuardRegistry:
         }
     )
 
-def build_retriever_registry(**kwargs) -> registry.RetrieverRegistry:
+def build_retriever_registry(pool=None, **kwargs) -> registry.RetrieverRegistry:
     db_url = utils.get_pg_url(cfg.PG1_DATABASE, cfg.PG1_HOST, cfg.PG1_PORT, cfg.PG1_USERNAME, cfg.PG1_PASSWORD)
     async_db_url = db_url.replace("+psycopg", "")
+    
+    # [MODIFIED] Part 2 리팩토링 호환성 방어: 외부에서 pool이 주입되면 pool을 쓰고, 아니면 기존 dsn 방식 유지
+    retriever_kwargs = {"pool": pool} if pool else {"dsn": async_db_url}
+    
     return RetrieverRegistry(
         items={
-            "default": PostgresHybridRetriever(dsn=async_db_url)
+            "default": PostgresHybridRetriever(**retriever_kwargs)
         }
     )
 
@@ -362,12 +366,20 @@ def build_postchecker_registry(**kwargs) -> registry.PostCheckerRegistry:
         }
     )
 
-# 신규 추가: 텍스트 압축기 조립 팩토리
+# [MODIFIED] 레지스트리에 LLMLinguaCompressorPlugin 등록 완료
+# def build_text_compressor_registry(**kwargs) -> registry.TextCompressorRegistry:
+#     return registry.TextCompressorRegistry(
+#         items={
+#             "default": LLMLinguaCompressorPlugin(target_token_ratio=0.5),
+#             "slm_compressor": LLMLinguaCompressorPlugin(target_token_ratio=0.5)
+#         }
+#     )
+
 def build_text_compressor_registry(**kwargs) -> registry.TextCompressorRegistry:
     return registry.TextCompressorRegistry(
         items={
-            "default": SLMTextCompressorPlugin(),
-            "slm_compressor": SLMTextCompressorPlugin()
+            "default": PassThroughCompressorPlugin(),
+            "slm_compressor": PassThroughCompressorPlugin()
         }
     )
 
@@ -382,3 +394,21 @@ def build_db_session_maker():
         
     engine = create_async_engine(async_db_url, pool_pre_ping=True)
     return async_sessionmaker(engine, expire_on_commit=False)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
