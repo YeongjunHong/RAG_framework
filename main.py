@@ -1,37 +1,29 @@
-from typing import List, Dict, Any
-# from src.pgdb.pg_crud import ... (필요한 DB 조작 함수 임포트 예정)
+import uvicorn
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from src.api.routes import router as chat_router
 
-def load_raw_data(source_path: str) -> List[Dict[str, Any]]:
-    """데이터소스(Hugging Face, CSV, JSON 등)로부터 원본 데이터를 로드합니다."""
-    raise NotImplementedError("새로운 도메인에 맞는 데이터 로드 로직 구현이 필요합니다.")
+app = FastAPI(
+    title="RAG AI-Tutor API",
+    description="LangGraph 기반 RAG 파이프라인 서빙 API",
+    version="1.0.0"
+)
 
-def chunk_documents(raw_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """로드된 원본 데이터를 적절한 크기의 청크(Chunk)로 분할합니다."""
-    raise NotImplementedError("데이터 특성에 맞는 청킹 전략(예: RecursiveCharacterTextSplitter) 구현이 필요합니다.")
+# 프론트엔드 통신을 위한 CORS 설정
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], # 실무에서는 실제 프론트엔드 도메인으로 제한할 것
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-def embed_chunks(chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """분할된 청크 텍스트를 벡터 임베딩으로 변환합니다."""
-    raise NotImplementedError("사용할 임베딩 모델 호출 로직이 필요합니다.")
+app.include_router(chat_router, prefix="/api")
 
-def ingest_to_vector_db(embedded_chunks: List[Dict[str, Any]]) -> None:
-    """임베딩이 완료된 청크와 메타데이터를 pgvector 데이터베이스에 적재합니다."""
-    raise NotImplementedError("DB 세션 관리 및 데이터 삽입 로직이 필요합니다.")
-
-def run_ingestion_pipeline(source_path: str) -> None:
-    """
-    [데이터 인제스천 파이프라인 흐름 제어]
-    데이터 로드 -> 청킹 -> 임베딩 -> DB 적재를 순차적으로 실행합니다.
-    """
-    print(f"[{source_path}] 데이터 인제스천 파이프라인 시작...")
-    
-    raw_data = load_raw_data(source_path)
-    chunks = chunk_documents(raw_data)
-    embedded_chunks = embed_chunks(chunks)
-    ingest_to_vector_db(embedded_chunks)
-    
-    print("데이터 인제스천 파이프라인 완료!")
+@app.get("/health")
+async def health_check():
+    return {"status": "ok", "message": "API is running."}
 
 if __name__ == "__main__":
-    # TODO: 도메인 확정 후 실제 데이터 경로로 변경
-    DUMMY_SOURCE_PATH = "path/to/new_domain_data" 
-    # run_ingestion_pipeline(DUMMY_SOURCE_PATH)
+    # uvicorn을 통해 ASGI 비동기 서버 구동
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
