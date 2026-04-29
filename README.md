@@ -36,31 +36,27 @@ LangGraph 노드 단위로 실행되는 독립적 책임 단위입니다.
 | Step | Process Name | Description | Status | 비고 |
 | :--- | :--- | :--- | :---: | :--- |
 | **00** | Input Guard | 악의적 프롬프트 및 PII 탐지 방어 | **완료** | 정규식 기반 Fail-fast 적용 |
-| **01** | Semantic Cache | Redis 기반 의미 유사도 캐싱 | **완료** | **LLM 호출 비용 90% 절감 (Similarity 0.90)** |
+| **01** | Semantic Cache | Redis 기반 의미 유사도 캐싱 | **완료** | **LLM 비용 90% 절감 (Similarity 0.90)** |
 | **02** | Planner | 쿼리 의도 분석 및 동적 라우팅 | **완료** | SLM 기반 의도 분류 및 Bypass 전략 |
-| **03** | Query Expansion | 질문 구체화 및 유사 질문 생성 | **완료** | 키워드 추출 vs 다중 쿼리 생성 전략 |
+| **03** | Query Expansion | 질문 구체화 및 유사 질문 생성 | **완료** | 키워드 추출 vs 다중 쿼리 전략 |
 | **04** | Retrieval | 유사 문서 후보군 탐색 | **완료** | pgvector + BM25 하이브리드 검색 |
 | **05** | Reranking | 검색 결과 순위 재조정 | **완료** | Cross-Encoder 및 Sigmoid 정규화 |
-| **06** | Filtering | 점수 기반 동적 노이즈 제거 | **완료** | **Floor + Margin + Min-K 하이브리드 필터링** |
+| **06** | Filtering | 점수 기반 동적 노이즈 제거 | **완료** | **Floor + Margin + Min-K 필터링** |
 | **07** | Post Check | 사후 안전성 및 근거 검증 | **완료** | **LLM Judge 기반 Groundedness 검증** |
 | **-** | **Threshold Tuner**| 임계값 자동 최적화 | **완료** | **F1-Score 기반 Calibration 스크립트** |
-| **-** | **RAGAS Evaluator**| 정량적 품질 품질 채점 | **완료** | **Faithfulness, Relevancy 등 지표 추적** |
+| **-** | **RAGAS Evaluator**| 정량적 품질 품질 채점 | **완료** | **Faithfulness, Relevancy 지표 추적** |
 
 ---
 
 ## 4. 핵심 아키텍처 특징
 
 * **Semantic Cache & Early Exit:** * Redis Vector Search를 이용한 캐싱으로 중복 질문에 대한 비용을 0으로 만듭니다. 
-  * 검색 결과가 없는 경우(Context Starvation) LLM을 호출하지 않고 조기 종료(Early Exit)하여 할루시네이션을 원천 차단합니다.
-* **Intent-Driven Filtering (Min-K Guarantee):** * 검색 결과의 절대 점수가 낮더라도 최소한의 문맥(`Min-K`)을 보장하거나 인텐트에 따라 Reranker를 우회하여 답변 재현율(Recall)을 확보합니다.
+  * 검색 결과가 없는 경우(Context Starvation) LLM을 호출하지 않고 조기 종료하여 할루시네이션을 원천 차단합니다.
+* **Intent-Driven Filtering (Min-K Guarantee):** * 검색 결과의 절대 점수가 낮더라도 최소한의 문맥(`Min-K`)을 보장하거나 인텐트에 따라 Reranker를 우회하여 재현율(Recall)을 확보합니다.
 * **Config-Driven MLOps Pipeline:** * 코드 수정 없이 설정 파일(`dynamic_thresholds.json`)과 쉘 스크립트만으로 최적화와 평가 전 과정을 제어합니다.
 * **Groundedness Enforcement:** * 생성된 답변이 제공된 문서에 완벽히 기반하는지를 최종 단계에서 LLM 판관 모델이 검증하여 신뢰성을 보장합니다.
 
 ---
-
-## 5. Directory Structure 
-
-본 프레임워크는 유지보수와 확장성을 극대화하기 위해 책임이 명확히 분리된 디렉토리 구조를 가집니다.
 
 ## 5. Directory Structure 
 
@@ -86,7 +82,7 @@ RAG_framework/
 │   ├── pgdb/                         # Database 추상화 및 Alembic 마이그레이션 관리
 │   │   ├── schema.py                 # SQLAlchemy 기반 DB 스키마 명세
 │   │   ├── pg_crud.py                # CRUD 및 비동기 DB 인터페이스 구현체
-│   │   └── versions/                 # Alembic 기반 점진적 스키마 히스토리 (init ~ 2026-04)
+│   │   └── versions/                 # Alembic 기반 점진적 스키마 히스토리
 │   └── rag/                          # 핵심 RAG 도메인 로직
 │       ├── bulk_source/              # 데이터 Ingestion 및 Few-shot 예제 관리
 │       ├── core/                     # 인터페이스 추상화(ABC) 및 공통 도메인 모델(Types)
@@ -121,12 +117,15 @@ RAG_framework/
 └── tests/                            # 모듈별 단위 테스트 및 통합 테스트
 ├── run_pipeline.sh                   # [Build -> Tune -> Demo -> Eval] 원클릭 실행기
 ├── main.py                           # 애플리케이션 엔트리포인트 (API 실행)
-└── requirements.txt                  # 프로젝트 의존성 명세
+└── pyproject.toml                    # uv 기반 프로젝트 및 의존성 명세
 ```
 ---
 
 ---
-## 6. 파이프라인 
+## 6. 파이프라인 워크플로우
+
+본 프레임워크는 LangGraph의 상태 머신(State Machine)을 기반으로 하며, 각 단계는 원자적 책임을 가집니다.
+
 
 
 ```mermaid
@@ -178,7 +177,7 @@ graph TD
 
     PostCheck --> End([Final Response]):::endpoint
     InputGuard -- "Violated" --> End
-  ```
+```
 
 ---
 
@@ -188,21 +187,9 @@ graph TD
 
 본 프레임워크는 데이터셋 구축부터 정량 평가까지의 전 과정을 **원클릭 파이프라인 자동화**로 지원합니다.
 
-###  사전 준비
-`.env.poc` 파일에 OpenRouter API Key 및 DB 연결 정보가 설정되어 있어야 합니다.
-
-###  파이프라인 실행
-터미널에서 아래 명령어를 순서대로 입력하세요.
+### 7.1 인프라 가동 (Docker Compose)
+`pgvector`, `RabbitMQ`, `Redis Stack` 등 핵심 인프라를 기동합니다. 로컬 포트 충돌을 방지하기 위해 PostgreSQL은 `5435` 포트를 사용하도록 설정되어 있습니다.
 
 ```bash
-# 1. 필수 의존성 라이브러리 설치
-pip install -r requirements.txt
-
-# 2. 실행 권한 부여
-chmod +x run_pipeline.sh
-
-# 3. 전체 파이프라인 자동 실행 (인자값: 인텐트당 샘플 개수, 기본값: 5)
-# 시퀀스: [Build Dataset] -> [Tune Thresholds] -> [Run Showcase] -> [Evaluate RAGAS]
-./run_pipeline.sh 3
-
----
+# 환경 변수 파일을 지정하여 백그라운드에서 인프라 기동
+docker-compose --env-file ./settings/.env.poc up --build -d

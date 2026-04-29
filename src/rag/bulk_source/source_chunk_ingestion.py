@@ -7,7 +7,9 @@ from dotenv import load_dotenv
 from datasets import load_dataset
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
+import torch
 from tqdm import tqdm
+
 
 current_file_path = Path(__file__).resolve()
 project_root = current_file_path.parents[3]
@@ -38,11 +40,16 @@ def generate_hash(text: str) -> str:
     """텍스트의 SHA-256 해시값을 생성합니다."""
     return hashlib.sha256(text.encode('utf-8')).hexdigest()
 
-def load_raw_data() -> List[Dict[str, Any]]:
-    print("데이터셋 다운로드 및 통합 중...")
+# 파라미터(target_domain) 추가 및 필터링 로직 반영
+def load_raw_data(target_domain: str = None) -> List[Dict[str, Any]]:
+    print(f"데이터셋 다운로드 및 통합 중... (타겟: {target_domain or 'ALL'})")
     unified_data = []
     
     for repo_id, split, text_cols, source_name in DATASET_CONFIGS:
+        # API에서 특정 도메인을 지정했는데, 현재 루프의 source_name과 다르면 스킵
+        if target_domain and source_name != target_domain:
+            continue
+            
         try:
             print(f" - {repo_id} 로드 중...")
             dataset = load_dataset(repo_id, split=split)
@@ -106,7 +113,7 @@ def process_soft_delete(db: PGDB, source_ids_to_delete: List[int]) -> None:
     db.execute_write(sql_disable_chunks, {"ids": source_ids_to_delete})
 
 
-def run_ingestion_pipeline() -> None:
+def run_ingestion_pipeline(target_domain: str = None) -> None:
     print("=== [Zero-Downtime] 증분 업데이트 기반 데이터 주입 시작 ===")
     
     try:
@@ -115,9 +122,9 @@ def run_ingestion_pipeline() -> None:
         print(f"DB 연결 실패: {e}")
         return
 
-    raw_data = load_raw_data()
+    raw_data = load_raw_data(target_domain=target_domain)
     if not raw_data:
-        print("적재할 데이터가 없습니다.")
+        print(f"적재할 데이터가 없습니다.(도메인: {target_domain})")
         return
 
     data_by_subject = {}
@@ -218,11 +225,19 @@ def run_ingestion_pipeline() -> None:
     print(f"\n총 {len(all_chunks_for_embedding)}개의 신규 고유 청크 임베딩 변환 시작...")
     
     print(f"임베딩 모델({EMBEDDING_MODEL_NAME}) 로드 중...")
+    # embeddings = HuggingFaceEmbeddings(
+    #     model_name=EMBEDDING_MODEL_NAME,
+    #     model_kwargs={'device': 'mps'}, 
+    #     encode_kwargs={'normalize_embeddings': True}
+    # )
+    device = "mps" if torch.backends.mps.is_available() else "cpu"
+    print(f"사용 장치: {device}")
+
     embeddings = HuggingFaceEmbeddings(
         model_name=EMBEDDING_MODEL_NAME,
-        model_kwargs={'device': 'mps'}, 
+        model_kwargs={'device': device}, 
         encode_kwargs={'normalize_embeddings': True}
-    )
+)
     
     texts_to_embed = [c["content"] for c in all_chunks_for_embedding]
     batch_size = 100

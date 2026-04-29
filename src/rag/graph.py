@@ -791,6 +791,7 @@ from .plugins.tracing import build_tracer
 from .plugins.cache_manager import SemanticCacheManager
 import src.rag.services.wiring as wiring
 from src.common.logger import get_logger
+from settings.config import cfg
 
 logger = get_logger(__name__)
 
@@ -805,7 +806,7 @@ def build_graph():
     db_session_maker = wiring.build_db_session_maker()
     input_guard_registry = wiring.build_input_guard_registry()
     
-    cache_manager = SemanticCacheManager(host="localhost", port=6379)
+    cache_manager = SemanticCacheManager()
     
     planner_registry = wiring.build_planner_registry()
     query_expander_registry = wiring.build_query_expander_registry()
