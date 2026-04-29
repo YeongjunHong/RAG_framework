@@ -1,0 +1,106 @@
+services:
+  # 1. Vector Database (PostgreSQL + pgvector + pg_search)
+  vdb:
+    build:
+      context: ./pg-ext
+      dockerfile: Dockerfile
+    container_name: rag_vdb
+    restart: always
+    env_file:
+      - ./settings/.env.poc
+    environment:
+      - POSTGRES_USER=${PG1_USERNAME:-postgres}
+      - POSTGRES_PASSWORD=${PG1_PASSWORD:-password}
+      - POSTGRES_DB=${PG1_DATABASE:-vector}
+    ports:
+      - "5435:5432" # 로컬 포트 충돌 방지를 위해 외부 포트 5435 사용
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG1_USERNAME:-postgres} -d ${PG1_DATABASE:-vector}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 2. Message Broker (RabbitMQ)
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rag_rabbitmq
+    restart: always
+    env_file:
+      - ./settings/.env.poc
+    environment:
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER:-guest}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD:-guest}
+    ports:
+      - "5672:5672"
+      - "15672:15672" # 관리자 UI
+    healthcheck:
+      test: rabbitmq-diagnostics -q ping
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 3. Semantic Cache (Redis with Search Module)
+  redis:
+    image: redis/redis-stack-server:latest
+    container_name: rag_redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  # 4. API Server (FastAPI)
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rag_api
+    restart: always
+    env_file:
+      - ./settings/.env.poc
+    environment:
+      - PG1_HOST=vdb
+      - PG1_PORT=5432
+      - RABBITMQ_HOST=rabbitmq
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    ports:
+      - "8000:8000"
+    depends_on:
+      vdb:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
+
+  # 5. Background Worker (FastStream)
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rag_worker
+    restart: always
+    env_file:
+      - ./settings/.env.poc
+    environment:
+      - PG1_HOST=vdb
+      - PG1_PORT=5432
+      - RABBITMQ_HOST=rabbitmq
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      vdb:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    command: faststream run src.rag.bulk_source.worker:app
+
+volumes:
+  pg_data:
+  redis_data:
