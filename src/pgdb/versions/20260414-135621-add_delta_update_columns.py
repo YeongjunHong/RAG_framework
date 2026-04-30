@@ -12,8 +12,9 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = '<생성된_새로운_해시값>'
-down_revision: Union[str, Sequence[str], None] = 'f1d6a878f625'
+# 반드시 아래 값이 '9a9df6b2d530' 이어야 합니다.
+revision: str = '9a9df6b2d530' 
+down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

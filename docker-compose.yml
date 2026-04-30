@@ -68,6 +68,9 @@ services:
       - REDIS_PORT=6379
     ports:
       - "8000:8000"
+    volumes:
+      - .:/app  # [핵심 수정] 로컬 디렉토리를 컨테이너의 /app에 실시간 동기화
+      - /app/.venv  # [핵심] 컨테이너 내부의 Linux용 .venv를 보호하는 익명 볼륨
     depends_on:
       vdb:
         condition: service_healthy
@@ -75,7 +78,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
-    command: uvicorn main:app --host 0.0.0.0 --port 8000
+    # 개발 편의성을 위해 FastAPI 자동 재시작(--reload) 옵션 추가
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
   # 5. Background Worker (FastStream)
   worker:
@@ -92,6 +96,9 @@ services:
       - RABBITMQ_HOST=rabbitmq
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+    volumes:
+      - .:/app  # [핵심 수정] 워커도 로컬 코드 실시간 동기화 적용
+      - /app/.venv  # [핵심] 동일하게 보호
     depends_on:
       vdb:
         condition: service_healthy
