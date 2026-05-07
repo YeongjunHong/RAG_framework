@@ -20,7 +20,7 @@ router = APIRouter()
 rag_app = build_graph()
 
 # RabbitMQ 브로커 (도커 컴포즈 서비스명인 'rabbitmq' 사용)
-# 실무에서는 환경 변수 처리하는 것이 좋음
+
 broker = RabbitBroker(cfg.RABBITMQ_URL)
 # --- Pydantic Models ---
 
