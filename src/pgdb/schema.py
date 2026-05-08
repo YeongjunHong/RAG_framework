@@ -146,7 +146,8 @@ class SourceKnowledge(SourceTableBase):
 
 
 class RagExecutionLog(TableBase):
-    __tablenamzze__ = "rag_execution_log"
+    # __tablenamzze__ = "rag_execution_log"
+    __tablename__ = "rag_execution_log"
 
     trace_id: Mapped[str] = mapped_column(String(100), unique=True, index=True, comment="Request 고유 ID")
     user_query: Mapped[str] = mapped_column(Text)
