@@ -242,8 +242,6 @@ docker-compose logs -f worker
 
 ### 3. Domain Guardrail (Planner)
 
-- Tool: LLM Judge (GPT-4o-mini)
-
-- Metric: 생성된 답변이 검색된 문서(Context)에 명시적으로 존재하는지 검증하여 할루시네이션 차단.
+- Logic: sLM의 의도 분류가 실패하더라도 비즈니스 핵심 키워드(비씨카드, 금리 등)를 감지하여 강제로 검색 파이프라인으로 승격(Promotion)시키는 안전장치.
 
 ---
