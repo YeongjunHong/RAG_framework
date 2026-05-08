@@ -45,6 +45,8 @@ LangGraph 노드 단위로 실행되는 독립적 책임 단위입니다.
 | **07** | Post Check | 사후 안전성 및 근거 검증 | **완료** | **LLM Judge 기반 Groundedness 검증** |
 | **-** | **Threshold Tuner**| 임계값 자동 최적화 | **완료** | **F1-Score 기반 Calibration 스크립트** |
 | **-** | **RAGAS Evaluator**| 정량적 품질 품질 채점 | **완료** | **Faithfulness, Relevancy 지표 추적** |
+| **-** | **A/B Benchmark**| Vanilla vs RAG 정밀 대조군 테스트 | **완료** | **BERTScore(F1) & GT 기반 정량 비교** |
+
 
 ---
 
@@ -68,6 +70,7 @@ RAG_framework/
 ├── examples/                         # 시스템 시연 및 시나리오 벤치마크
 │   ├── run_demo.py                   # 기본 기능 단위 검증용 데모
 │   └── run_showcase.py               # E2E 복합 추론 및 보안 시나리오 통합 데모
+│   └── run_ab_benchmark.py           # [NEW] GT 데이터셋 기반 Vanilla vs RAG 정량 대조 벤치마크
 ├── pg-ext/                           # Docker 기반 PostgreSQL/pgvector 인프라 구성
 ├── scripts/                          # MLOps 자동화 및 하이퍼파라미터 튜닝
 │   ├── build_eval_dataset.py         # HF 데이터셋 기반 평가 데이터 자동 구축
@@ -219,3 +222,28 @@ docker-compose logs -f api
 docker-compose logs -f worker
 
 ```
+
+---
+## 8. Evaluation Methodology (Triple-Check System)
+
+본 프레임워크는 답변의 신뢰성을 보장하기 위해 세 가지 독립적인 평가 지표를 결합한 3각 검증 체계를 운용합니다.
+
+### 1. Faithfulness (Faithfulness / Groundedness) 
+
+- Tool: LLM Judge (GPT-4o-mini)
+
+- Metric: 생성된 답변이 검색된 문서(Context)에 명시적으로 존재하는지 검증하여 할루시네이션 차단.
+
+### 2. Semantic Similarity (BERTScore)
+
+- Tool: klue/roberta-base
+
+- Metric: 단순 키워드 일치(BLEU)를 넘어, Ground Truth(정답지)와 답변 간의 벡터 유사도(F1-Score)를 계산하여 의미적 정확도 측정.
+
+### 3. Domain Guardrail (Planner)
+
+- Tool: LLM Judge (GPT-4o-mini)
+
+- Metric: 생성된 답변이 검색된 문서(Context)에 명시적으로 존재하는지 검증하여 할루시네이션 차단.
+
+---
