@@ -10,7 +10,8 @@ class GeneratorConfig(BaseModel):
     model: str | None = None
 
 class GeneratorStage(RagStage[GeneratorConfig]):
-    name = "generator_llm"
+    # name = "generator_llm"
+    name = "generator" # "generator_llm"에서 "generator"로 수정
 
     def __init__(self, config: GeneratorConfig, llm: RagGenerator, tracer: Tracer):
         super().__init__(config)
