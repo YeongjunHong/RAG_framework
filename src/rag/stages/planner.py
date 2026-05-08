@@ -77,15 +77,28 @@ class PlannerStage(RagStage[PlannerConfig]):
 
     async def run(self, request: RagRequest, ctx: RagContext) -> RagContext:
         with self.tracer.span("planner", provider=self.config.provider):
+            # 1. Rule-based L7 라우팅
             semantic_plan = self._semantic_route(request.user_query)
             if semantic_plan:
                 logger.info("[PlannerStage] Rule-based 매칭 완료 (sLM 스킵)")
                 self._apply_routing_flags(ctx, semantic_plan, request)
                 return ctx
 
+            # 2. sLM 기반 의도 분석
             logger.info("[PlannerStage] sLM 기반 의도 분석 시작")
             planner_plugin = self.registry.get(self.config.provider)
             plan_result = await planner_plugin.forward(request.user_query)
+            
+            # [핵심 추가] Domain Guardrail: sLM 오분류 강제 교정
+            # sLM이 chitchat으로 빼버렸더라도, 핵심 도메인 키워드가 있다면 검색으로 강제 승급
+            domain_keywords = ["비씨카드", "카드", "은행", "결제", "수수료", "할인", "가맹점", "금리", "대출", "적금"]
+            
+            if plan_result.get("intent") == QueryIntent.CHITCHAT.value:
+                if any(keyword in request.user_query for keyword in domain_keywords):
+                    logger.warning(f"[PlannerStage] sLM 오분류 감지. 도메인 키워드 포함으로 SIMPLE_SEARCH 강제 승급.")
+                    plan_result["intent"] = QueryIntent.SIMPLE_SEARCH.value
+                    plan_result["requires_db"] = True
+                    plan_result["strict_validation"] = False
             
             self._apply_routing_flags(ctx, plan_result, request)
         return ctx
